@@ -1,0 +1,16 @@
+{
+  "Name": "Relax Valley",
+  "Author": "Awassakura",
+  "Version": "0.1.0",
+  "Description": "星露谷 1.6 综合菜单模组（现代化重构版）。",
+  "UniqueID": "Awassakura.RelaxValley",
+  "EntryDll": "RelaxValley.dll",
+  "MinimumApiVersion": "4.0.0",
+  "Dependencies": [
+    {
+      "UniqueID": "focustense.StardewUI",
+      "IsRequired": true
+    }
+  ],
+  "UpdateKeys": []
+}
