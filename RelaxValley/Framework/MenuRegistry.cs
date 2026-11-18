@@ -1,4 +1,4 @@
-﻿using RelaxValley.Framework.UI;
+using RelaxValley.Framework.UI;
 using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Locations;
@@ -39,8 +39,7 @@ public sealed class MenuRegistry
             new MenuEntry("PerfectionTracker",  null,                  category: "Info"),
             new MenuEntry("GoldenWalnutsInfo",  OpenGoldenWalnutsInfo, category: "Info",
                 condition: () => Game1.netWorldState.Value.GoldenWalnuts > 0),
-            new MenuEntry("FriendshipData", OpenFriendship, category: "Info",
-    condition: () => Game1.player.friendshipData.Count() > 0),
+            new MenuEntry("FriendshipData", OpenFriendship, category: "Info"),
 
             // ═════════════ B. 地图与传送 ═════════════
             new MenuEntry("LocationMap",        OpenMap,               category: "Map"),
@@ -101,6 +100,7 @@ public sealed class MenuRegistry
             ("ShopHatMouse",     "HatMouse"),
             ("ShopClintUpgrade", "ClintUpgrade"),
             ("ShopRecovery",     "AdventureGuildRecovery"),
+                        ("ShopBookseller",   "Bookseller"),
         };
 
         foreach (var (id, shopId) in vanillaShops)
@@ -388,7 +388,7 @@ public sealed class MenuRegistry
             return;
         }
 
-        var model = new FriendshipViewModel();
+        var model = new FriendshipViewModel(_helper.Translation);
         string assetName = $"Mods/{ModEntry.Instance.ModManifest.UniqueID}/Views/FriendshipView";
         var menu = viewEngine.CreateMenuFromAsset(assetName, model);
 

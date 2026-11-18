@@ -1,4 +1,4 @@
-﻿using RelaxValley.Framework;
+using RelaxValley.Framework;
 using RelaxValley.Framework.UI;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
@@ -14,6 +14,15 @@ public class ModEntry : Mod
 
     private MenuRegistry _menuRegistry = null!;
 
+    /// <summary>
+    /// 需要等玩家空闲（没有菜单、对话、动画）后再执行的动作。
+    /// 从菜单/问题对话框的回调里不能立刻打开新对话，否则会被旧菜单的收尾流程关掉。
+    /// </summary>
+    private static readonly Queue<Action> PendingActions = new();
+
+    /// <summary>把动作排到玩家空闲后的下一帧执行。</summary>
+    internal static void RunWhenPlayerFree(Action action) => PendingActions.Enqueue(action);
+
     public override void Entry(IModHelper helper)
     {
         Instance = this;
@@ -22,6 +31,7 @@ public class ModEntry : Mod
 
         helper.Events.Input.ButtonPressed += OnButtonPressed;
         helper.Events.GameLoop.GameLaunched += OnGameLaunched;
+        helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
 
         Monitor.Log("Relax Valley 已加载。", LogLevel.Info);
 
@@ -60,6 +70,31 @@ public class ModEntry : Mod
         ViewEngine.EnableHotReloading();
 
         Monitor.Log("StardewUI API 已就绪。", LogLevel.Info);
+    }
+
+    private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
+    {
+        if (!Context.IsWorldReady)
+        {
+            // 读档/回标题时丢弃上一局遗留的延迟动作
+            PendingActions.Clear();
+            return;
+        }
+
+        if (PendingActions.Count == 0 || !Context.IsPlayerFree) return;
+
+        while (PendingActions.Count > 0 && Context.IsPlayerFree)
+        {
+            Action action = PendingActions.Dequeue();
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                Monitor.Log($"延迟动作执行失败：{ex}", LogLevel.Error);
+            }
+        }
     }
 
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
