@@ -15,8 +15,28 @@ namespace RelaxValley.Framework.UI;
 
 public class FriendshipViewModel : INotifyPropertyChanged
 {
+    /// <summary>置顶村民列表存在玩家 modData 里，换存档独立、跟随存档保存。</summary>
+    private const string PinnedKey = "Awassakura.RelaxValley/PinnedFriends";
+
+    /// <summary>普通村民名字颜色（深棕黑，贴合原版羊皮纸背景）。</summary>
+    private const string NormalNameColor = "#3B2A1E";
+
+    /// <summary>可结婚对象的名字颜色（粉色）。</summary>
+    private const string MarriageNameColor = "#D955A0";
+
+    /// <summary>未认识村民的灰显颜色。</summary>
+    private const string UnmetColor = "#8A8580";
+
     private readonly ITranslationHelper _translations;
     private readonly List<FriendItem> _allFriends;
+    private readonly HashSet<string> _todaysBirthdays;
+    private readonly HashSet<string> _pinned;
+
+    /// <summary>
+    /// 进度模式 = 未认识的村民不可互动；
+    /// 常开模式（false）= 允许一键对话结识新村民、点击卡片直接“认识”。
+    /// </summary>
+    private readonly bool _progressMode;
 
     public string Title => I18n.RelaxValley_UI_Friendship_Title();
 
@@ -25,6 +45,12 @@ public class FriendshipViewModel : INotifyPropertyChanged
     public string InteractionHint => I18n.RelaxValley_UI_Friendship_InteractionHint();
 
     public string PreviewHint => I18n.RelaxValley_UI_Friendship_PreviewHint();
+
+    public string TalkAllText => I18n.RelaxValley_UI_Friendship_TalkAll();
+
+    public string LocateBirthdayText => I18n.RelaxValley_UI_Friendship_LocateBirthday();
+
+    public string PinHint => I18n.RelaxValley_UI_Friendship_PinHint();
 
     // ── 左侧悬停预览 ─────────────────────────────────────────────
 
@@ -140,10 +166,90 @@ public class FriendshipViewModel : INotifyPropertyChanged
         }
     }
 
-    public FriendshipViewModel(ITranslationHelper translations)
+    public FriendshipViewModel(ITranslationHelper translations, bool progressMode = true)
     {
         _translations = translations;
+        _progressMode = progressMode;
+        _todaysBirthdays = BuildTodaysBirthdays();
+        _pinned = LoadPinned();
         _allFriends = BuildFriends();
+        ApplyFilters();
+    }
+
+    /// <summary>今天过生日的村民名字。用原版 NPC.isBirthday() 判断，和日历一致。</summary>
+    private static HashSet<string> BuildTodaysBirthdays()
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            Utility.ForEachVillager(npc =>
+            {
+                if (npc.isBirthday()) names.Add(npc.Name);
+                return true;
+            });
+        }
+        catch
+        {
+            // 日历 / 生日数据异常时不影响页面其它功能
+        }
+
+        return names;
+    }
+
+    // ── 置顶 ─────────────────────────────────────────────────────
+
+    private HashSet<string> LoadPinned()
+    {
+        string raw = "";
+        if (Game1.player is not null
+            && Game1.player.modData.TryGetValue(PinnedKey, out string? value))
+        {
+            raw = value ?? "";
+        }
+
+        return new HashSet<string>(
+            raw.Split(',', StringSplitOptions.RemoveEmptyEntries),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void SavePinned()
+    {
+        if (Game1.player is null) return;
+        Game1.player.modData[PinnedKey] = string.Join(",", _pinned);
+    }
+
+    /// <summary>右键村民卡片：置顶 / 取消置顶（可同时置顶多位）。</summary>
+    public void OnFriendRightClicked(string npcName)
+    {
+        if (string.IsNullOrWhiteSpace(npcName)) return;
+        TogglePin(npcName);
+    }
+
+    private void TogglePin(string npcName)
+    {
+        if (!_pinned.Remove(npcName))
+            _pinned.Add(npcName);
+
+        SavePinned();
+        RefreshFriendFlags();
+        Game1.playSound("smallSelect");
+    }
+
+    /// <summary>刷新卡片上的置顶 / 生日标记，不重建整个列表。</summary>
+    private void RefreshFriendFlags()
+    {
+        foreach (FriendItem friend in _allFriends)
+        {
+            friend.IsPinned = _pinned.Contains(friend.NpcName);
+            friend.PinText = friend.IsPinned
+                ? I18n.RelaxValley_UI_Friendship_PinnedBadge()
+                : "";
+            friend.IsBirthday = _todaysBirthdays.Contains(friend.NpcName);
+            friend.BirthdayText = friend.IsBirthday
+                ? I18n.RelaxValley_UI_Friendship_BirthdayBadge()
+                : "";
+        }
+
         ApplyFilters();
     }
 
@@ -227,30 +333,46 @@ public class FriendshipViewModel : INotifyPropertyChanged
 
         string tooltip = pointsLabel + "\n" + locationLabel + "\n" + scheduleLabel;
 
-        string textColor = isMet ? "#FFFFFF" : "#888888";
+        string textColor = isMet ? NormalNameColor : UnmetColor;
+
+        // 可结婚对象用粉色名字，其余普通村民用黑色（未认识的灰显）
+        bool isDatable = npc?.datable.Value ?? data?.CanBeRomanced ?? false;
+        string nameColor = !isMet
+            ? UnmetColor
+            : isDatable ? MarriageNameColor : NormalNameColor;
+
+        bool isBirthday = _todaysBirthdays.Contains(npcName);
+
         string giftStatus;
         string giftColor;
 
         if (isMet)
         {
             giftStatus = giftedToday ? "今日已送礼" : "今日可送礼";
-            giftColor = giftedToday ? "#999999" : "#50B450";
+            giftColor = giftedToday ? "#8A8580" : "#2E7D32";
         }
         else
         {
             giftStatus = I18n.RelaxValley_UI_Friendship_Unmet();
-            giftColor = "#777777";
+            giftColor = UnmetColor;
             tooltip += "\n" + I18n.RelaxValley_UI_Friendship_Unmet();
         }
+
+        bool isPinned = _pinned.Contains(npcName);
 
         return new FriendItem
         {
             NpcName = npcName,
             DisplayName = displayName,
             IsMet = isMet,
-            NameColor = textColor,
+            IsPinned = isPinned,
+            IsBirthday = isBirthday,
+            PinText = isPinned ? I18n.RelaxValley_UI_Friendship_PinnedBadge() : "",
+            BirthdayText = isBirthday ? I18n.RelaxValley_UI_Friendship_BirthdayBadge() : "",
+            NameColor = nameColor,
             TextColor = textColor,
             CardOpacity = isMet ? 1f : 0.55f,
+            Points = points,
             HeartValue = hearts,
             HeartText = $"{hearts} / {maxHearts} 心",
             GiftsThisWeek = giftsThisWeek,
@@ -379,14 +501,57 @@ public class FriendshipViewModel : INotifyPropertyChanged
 
         if (!friend.IsMet)
         {
+            // 进度模式：未认识不可互动；常开模式：点击即“认识”
+            if (_progressMode)
+            {
+                Game1.showGlobalMessage(_translations
+                    .Get(I18n.Keys.RelaxValley_UI_Friendship_NotMet)
+                    .Tokens(new { name = friend.DisplayName })
+                    .ToString());
+                return;
+            }
+
+            MeetNpc(friend);
+            return;
+        }
+
+        ShowInteractionMenu(npcName);
+    }
+
+    /// <summary>常开模式：结识村民并按原版规则获得当日交谈好感度。</summary>
+    private void MeetNpc(FriendItem friend)
+    {
+        NPC? npc = Game1.getCharacterFromName(friend.NpcName);
+        if (npc == null)
+        {
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Friendship_NotFound());
+            return;
+        }
+
+        if (!npc.CanSocialize)
+        {
             Game1.showGlobalMessage(_translations
-                .Get(I18n.Keys.RelaxValley_UI_Friendship_NotMet)
+                .Get(I18n.Keys.RelaxValley_UI_Friendship_CannotSocialize)
                 .Tokens(new { name = friend.DisplayName })
                 .ToString());
             return;
         }
 
-        ShowInteractionMenu(npcName);
+        if (!Game1.player.friendshipData.ContainsKey(friend.NpcName))
+            Game1.player.friendshipData[friend.NpcName] = new Friendship();
+
+        // 原版 grantConversationFriendship：当日交谈标记 + 好感度（雕像祝福等加成由游戏处理）
+        npc.grantConversationFriendship(Game1.player);
+        Game1.playSound("bigSelect");
+
+        Game1.showGlobalMessage(_translations
+            .Get(I18n.Keys.RelaxValley_UI_Friendship_Met)
+            .Tokens(new { name = friend.DisplayName })
+            .ToString());
+
+        _allFriends.Clear();
+        _allFriends.AddRange(BuildFriends());
+        ApplyFilters();
     }
 
     private void ShowInteractionMenu(string npcName)
@@ -505,7 +670,13 @@ public class FriendshipViewModel : INotifyPropertyChanged
         Texture2D? texture = null;
         try
         {
-            texture = Game1.getCharacterFromName(npcName)?.Portrait;
+            var npc = Game1.getCharacterFromName(npcName);
+
+            // 立绘只会在 NPC 创建时加载一次；换季 / 节日 / 岛装等外观模组
+            // 需要重新走一遍 ChooseAppearance 才能拿到当前实际显示的样子。
+            npc?.ChooseAppearance();
+
+            texture = npc?.Portrait;
         }
         catch
         {
@@ -528,6 +699,9 @@ public class FriendshipViewModel : INotifyPropertyChanged
             var npc = Game1.getCharacterFromName(npcName);
             if (npc?.Sprite != null)
             {
+                // 与立绘同理：刷新外观后再读取行走图
+                npc.ChooseAppearance();
+
                 texture = npc.Sprite.Texture;
                 sourceRect = npc.Sprite.SourceRect;
             }
@@ -574,15 +748,102 @@ public class FriendshipViewModel : INotifyPropertyChanged
 
         filtered = SelectedSortIndex switch
         {
-            0 => filtered.OrderByDescending(f => f.HeartValue),
-            1 => filtered.OrderBy(f => f.HeartValue),
+            // 好感度排序使用精确点数，而不是整数心数
+            0 => filtered.OrderByDescending(f => f.Points),
+            1 => filtered.OrderBy(f => f.Points),
             2 => filtered.OrderBy(f => f.DisplayName),
             3 => filtered.OrderByDescending(f => f.GiftsThisWeek),
-            4 => filtered.OrderBy(f => f.GiftedToday).ThenByDescending(f => f.HeartValue),
-            _ => filtered.OrderByDescending(f => f.HeartValue)
+            4 => filtered.OrderBy(f => f.GiftedToday).ThenByDescending(f => f.Points),
+            _ => filtered.OrderByDescending(f => f.Points)
         };
 
-        Friends = filtered.ToList();
+        // 置顶村民永远排在最前，其余保持所选排序
+        Friends = filtered.OrderByDescending(f => f.IsPinned).ToList();
+    }
+
+    // ── 一键对话 / 定位今日生日 ─────────────────────────────────
+
+    /// <summary>
+    /// 一键对话：对所有已认识、且今天还没聊过的村民调用原版
+    /// <see cref="NPC.grantConversationFriendship"/>，
+    /// 好感度、任务通知、雕像祝福加成等全部走游戏本体规则，不弹对话。
+    /// </summary>
+    public void TalkAll()
+    {
+        int count = 0;
+
+        foreach (FriendItem friend in _allFriends)
+        {
+            // 进度模式：只对已认识的村民生效；常开模式：顺带结识新村民
+            if (!friend.IsMet && _progressMode) continue;
+
+            NPC? npc = Game1.getCharacterFromName(friend.NpcName);
+            if (npc is null || !npc.CanSocialize) continue;
+
+            if (!Game1.player.friendshipData.TryGetValue(friend.NpcName, out Friendship friendship))
+            {
+                if (friend.IsMet) continue;
+
+                // 常开模式：先建立结识记录，再走原版交谈好感度
+                Game1.player.friendshipData[friend.NpcName] = new Friendship();
+                friendship = Game1.player.friendshipData[friend.NpcName];
+            }
+
+            if (friendship.TalkedToToday) continue;
+
+            npc.grantConversationFriendship(Game1.player);
+            count++;
+        }
+
+        Game1.playSound(count > 0 ? "brush" : "cancel");
+        Game1.showGlobalMessage(count > 0
+            ? _translations.Get(I18n.Keys.RelaxValley_UI_Friendship_TalkAllResult)
+                .Tokens(new { count })
+                .ToString()
+            : I18n.RelaxValley_UI_Friendship_TalkAllNone());
+
+        _allFriends.Clear();
+        _allFriends.AddRange(BuildFriends());
+        ApplyFilters();
+    }
+
+    /// <summary>定位今日生日的村民：只有一位时直接传送，多位时让玩家选。</summary>
+    public void LocateBirthdayNpc()
+    {
+        List<FriendItem> birthdayFriends = _allFriends
+            .Where(f => f.IsBirthday && f.IsMet)
+            .ToList();
+
+        if (birthdayFriends.Count == 0)
+        {
+            Game1.playSound("cancel");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Friendship_NoBirthday());
+            return;
+        }
+
+        if (birthdayFriends.Count == 1)
+        {
+            birthdayFriends[0].Teleport();
+            return;
+        }
+
+        var location = Game1.currentLocation;
+        if (location is null) return;
+
+        location.createQuestionDialogue(
+            I18n.RelaxValley_UI_Friendship_BirthdayChoose(),
+            birthdayFriends
+                .Select(f => new Response(f.NpcName, f.DisplayName))
+                .Append(new Response("Cancel", I18n.RelaxValley_UI_Friendship_Cancel()))
+                .ToArray(),
+            (_, answer) =>
+            {
+                FriendItem? target = birthdayFriends
+                    .FirstOrDefault(f => string.Equals(f.NpcName, answer, StringComparison.OrdinalIgnoreCase));
+                if (target is null) return;
+
+                ModEntry.RunWhenPlayerFree(target.Teleport);
+            });
     }
 
     // ── INPC ────────────────────────────────────────────────────
@@ -606,9 +867,21 @@ public class FriendItem
     public string DisplayName { get; set; } = "";
     public bool IsMet { get; set; }
 
+    /// <summary>是否被玩家置顶。</summary>
+    public bool IsPinned { get; set; }
+
+    /// <summary>今天是否是此村民的生日。</summary>
+    public bool IsBirthday { get; set; }
+
+    public string PinText { get; set; } = "";
+    public string BirthdayText { get; set; } = "";
+
     public string NameColor { get; set; } = "#FFFFFF";
     public string TextColor { get; set; } = "#FFFFFF";
     public float CardOpacity { get; set; } = 1f;
+
+    /// <summary>精确好感度点数（250 点 = 1 心），用于排序。</summary>
+    public int Points { get; set; }
 
     public int HeartValue { get; set; }
     public string HeartText { get; set; } = "";

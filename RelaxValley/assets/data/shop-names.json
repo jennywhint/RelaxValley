@@ -1,0 +1,11 @@
+{
+  "Readme": "商店中文名覆盖表。键 = Data/Shops 里的商店 ID（SMAPI 控制台执行 rv_list_shops 可查看），值 = 你想显示的名字。未配置的商店会按「NPC 名字 → 英文词翻译 → 原 ID」的顺序自动推断。不同存档使用了不同模组时，把对应 ID 加到这里即可。",
+  "ShopNames": {
+    "KMF.blackmarket": "KMF 黑市",
+    "Pathoschild.CentralStation_FoodCourt": "中央车站·美食广场",
+    "Pathoschild.CentralStation_GiftShop": "中央车站·礼品店",
+    "Pathoschild.CentralStation_Locker": "中央车站·储物柜",
+    "Nature.SKillfulRev_ClothesShop": "服装店",
+    "JolaMods.PelicanCards_VendingShop": "鹈鹕卡牌·贩卖机"
+  }
+}

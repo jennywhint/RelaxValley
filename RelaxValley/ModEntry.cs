@@ -1,9 +1,13 @@
 using RelaxValley.Framework;
+using RelaxValley.Framework.Shops;
 using RelaxValley.Framework.UI;
+using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewUI.Framework;
 using StardewValley;
+using StardewValley.GameData.Shops;
+using StardewValley.Menus;
 
 namespace RelaxValley;
 
@@ -11,6 +15,7 @@ public class ModEntry : Mod
 {
     internal static ModEntry Instance { get; private set; } = null!;
     internal static IViewEngine? ViewEngine { get; private set; }
+    internal static ModConfig Config { get; set; } = new();
 
     private MenuRegistry _menuRegistry = null!;
 
@@ -27,11 +32,14 @@ public class ModEntry : Mod
     {
         Instance = this;
         I18n.Init(helper.Translation);
+        Config = helper.ReadConfig<ModConfig>();
         _menuRegistry = new MenuRegistry(Monitor, helper);
 
         helper.Events.Input.ButtonPressed += OnButtonPressed;
         helper.Events.GameLoop.GameLaunched += OnGameLaunched;
+        helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
         helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
+        helper.Events.Display.MenuChanged += OnMenuChanged;
 
         Monitor.Log("Relax Valley 已加载。", LogLevel.Info);
 
@@ -54,6 +62,61 @@ public class ModEntry : Mod
             }
             Monitor.Log($"[CasinoDebug] Game1.player.clubCoins = {Game1.player.clubCoins}", LogLevel.Info);
         });
+
+        // 供 mod 商店 JSON 使用：列出 Data/Shops 的所有商店 ID 与拥有者条件
+        helper.ConsoleCommands.Add(
+            "rv_list_shops",
+            "列出 Data/Shops 的商店 ID 与拥有者条件，供 assets/data/shops.json 使用",
+            (cmd, args) =>
+            {
+                try
+                {
+                    var shops = Game1.content.Load<Dictionary<string, ShopData>>("Data/Shops");
+                    foreach (var pair in shops.OrderBy(p => p.Key))
+                    {
+                        string owners = pair.Value.Owners is null
+                            ? ""
+                            : string.Join(", ", pair.Value.Owners.Select(o => $"{o.Name} [{o.Condition}]"));
+                        Monitor.Log($"{pair.Key} | {owners}", LogLevel.Info);
+                    }
+
+                    Monitor.Log($"共 {shops.Count} 个商店。", LogLevel.Info);
+                }
+                catch (Exception ex)
+                {
+                    Monitor.Log($"读取 Data/Shops 失败：{ex}", LogLevel.Error);
+                }
+            });
+    }
+
+    private void OnMenuChanged(object? sender, MenuChangedEventArgs e)
+    {
+        // 玩家在原版里打开过某个商店/菜单后，才允许工作室远程打开它。
+        switch (e.NewMenu)
+        {
+            case ShopMenu shopMenu:
+                ShopDiscovery.MarkVisited(shopMenu.ShopId);
+                break;
+
+            case CarpenterMenu carpenterMenu:
+                ShopDiscovery.MarkVisited(
+                    carpenterMenu.Builder == Game1.builder_wizard ? "WizardBuild" : "RobinBuild");
+                break;
+
+            case PurchaseAnimalsMenu:
+                ShopDiscovery.MarkVisited("AnimalPurchase");
+                break;
+
+            case GeodeMenu:
+                ShopDiscovery.MarkVisited("Geode");
+                break;
+        }
+    }
+
+    private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
+    {
+        // 老存档兼容：按存档进度补记“必然已经打开过”的原版商店
+        ShopDiscovery.InitializeFromSave();
     }
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
@@ -70,6 +133,101 @@ public class ModEntry : Mod
         ViewEngine.EnableHotReloading();
 
         Monitor.Log("StardewUI API 已就绪。", LogLevel.Info);
+
+        RegisterToolbarIcon();
+        RegisterGenericModConfigMenu();
+    }
+
+    /// <summary>Iconic Framework 兼容：注册一个打开本模组主菜单的工具图标（等效按主菜单键）。</summary>
+    private void RegisterToolbarIcon()
+    {
+        var api = Helper.ModRegistry.GetApi<IIconicFrameworkApi>("furyx639.ToolbarIcons");
+        if (api is null) return;
+
+        api.AddToolbarIcon(
+            ModManifest.UniqueID,
+            "LooseSprites/emojis",
+            new Rectangle(27, 54, 9, 9),
+            () => I18n.RelaxValley_UI_Iconic_Title(),
+            () => I18n.RelaxValley_UI_Iconic_Desc(),
+            () =>
+            {
+                if (!Context.IsPlayerFree) return;
+                _menuRegistry.OpenMainMenu();
+            });
+
+        Monitor.Log("已向 Iconic Framework 注册工具图标。", LogLevel.Info);
+    }
+
+    /// <summary>可选集成：装了 GMCM 时注册配置项，用于配置完美度外接页面。</summary>
+    private void RegisterGenericModConfigMenu()
+    {
+        var api = Helper.ModRegistry.GetApi<IGenericModConfigMenuApi>(
+            "spacechase0.GenericModConfigMenu");
+
+        if (api is null) return;
+
+        api.Register(
+            ModManifest,
+            reset: () => Config = new ModConfig(),
+            save: () => Helper.WriteConfig(Config));
+
+        api.AddKeybind(
+            ModManifest,
+            getValue: () => Config.OpenMenuKey,
+            setValue: value => Config.OpenMenuKey = value,
+            name: () => "打开主菜单",
+            tooltip: () => "按下此键打开 Relax Valley 主菜单（默认 F3，可改为任意键）。");
+
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.ShopProgressMode,
+            setValue: value => Config.ShopProgressMode = value,
+            name: () => "商店进度模式",
+            tooltip: () => "开启：需要先在游戏里打开过一次商店才能远程购买。\n关闭：常开模式，所有已安装商店始终可交互（营业时间等条件仍然生效）。");
+
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.FriendshipProgressMode,
+            setValue: value => Config.FriendshipProgressMode = value,
+            name: () => "村民友谊进度模式",
+            tooltip: () => "开启：未认识的村民不可互动。\n关闭：常开模式，一键对话会结识新村民，点击卡片可直接认识并获得好感度。");
+
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.ElevatorProgressMode,
+            setValue: value => Config.ElevatorProgressMode = value,
+            name: () => "远程电梯进度模式",
+            tooltip: () => "开启：电梯按当前最深层数解锁。\n关闭：常开模式，矿井全部楼层与骷髅矿洞常规楼层直接可用。");
+
+        api.AddTextOption(
+            ModManifest,
+            getValue: () => string.Join(", ", Config.PerfectionItems),
+            setValue: value => Config.PerfectionItems = SplitOption(value),
+            name: () => "手册物品名（逗号分隔）",
+            tooltip: () => "右键「完美度追踪」时，会先尝试使用背包里这些名字的物品（例如 Perfect Handbook / 完美手册）。");
+
+        api.AddTextOption(
+            ModManifest,
+            getValue: () => string.Join("; ", Config.PerfectionMenuTypes),
+            setValue: value => Config.PerfectionMenuTypes = SplitOption(value, ';'),
+            name: () => "菜单类型全名（分号分隔）",
+            tooltip: () => "没有物品可用时，尝试实例化这些类型并作为菜单打开。格式：命名空间.类型名, 程序集名");
+
+        Monitor.Log("已注册 GMCM 配置项。", LogLevel.Info);
+    }
+
+    private static List<string> SplitOption(string value, char separator = ',')
+    {
+        var result = new List<string>();
+
+        foreach (string part in (value ?? "").Split(separator))
+        {
+            string trimmed = part.Trim();
+            if (trimmed.Length > 0) result.Add(trimmed);
+        }
+
+        return result;
     }
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
@@ -100,13 +258,56 @@ public class ModEntry : Mod
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
     {
         if (!Context.IsWorldReady) return;
-        if (e.Button != SButton.F3) return;
 
-        if (Game1.activeClickableMenu is not null)
-            Game1.exitActiveMenu();
+        if (e.Button == Config.OpenMenuKey)
+        {
+            if (Game1.activeClickableMenu is not null)
+                Game1.exitActiveMenu();
 
-        var entries = _menuRegistry.GetMainMenuEntries();
-        Game1.activeClickableMenu = new MainMenu(entries, Helper.Translation, Monitor);
-        Game1.playSound("bigSelect");
+            _menuRegistry.OpenMainMenu();
+            return;
+        }
+
+        TryRunMenuShortcut(e.Button);
+    }
+
+    /// <summary>菜单条目快捷键：支持组合键，同一条目可绑定多个按键 / 组合。</summary>
+    private void TryRunMenuShortcut(SButton pressed)
+    {
+        foreach (var (entryId, combos) in Config.MenuShortcutKeys)
+        {
+            foreach (string combo in combos)
+            {
+                if (!MatchesCombo(combo, pressed)) continue;
+
+                if (_menuRegistry.TryRunEntryById(entryId)) return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 组合键匹配：按下的是组合中的主键，且其余修饰键都处于按住状态。
+    /// 形如 "LeftControl + H"；解析失败的配置直接忽略。
+    /// </summary>
+    private bool MatchesCombo(string combo, SButton pressed)
+    {
+        var buttons = new List<SButton>();
+
+        foreach (string part in combo.Split('+'))
+        {
+            string name = part.Trim();
+            if (name.Length == 0) return false;
+            if (!Enum.TryParse(name, ignoreCase: true, out SButton button)) return false;
+            buttons.Add(button);
+        }
+
+        if (buttons.Count == 0 || !buttons.Contains(pressed)) return false;
+
+        foreach (SButton button in buttons)
+        {
+            if (button != pressed && !Helper.Input.IsDown(button)) return false;
+        }
+
+        return true;
     }
 }

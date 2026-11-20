@@ -1,0 +1,4 @@
+{
+  "Readme": "一般不需要手动维护这个文件：安装的模组只要往 Data/Shops 添加了商店，工作台会自动按模组分组列出（需要先在游戏里打开过一次才能远程打开）。只有自动发现失败的商店（商店 ID 不以模组 UniqueID 开头）才需要手写在这里。字段说明：Id = 内部唯一 ID；Name = 显示名；Category 建议 WorkbenchShopMod；Kind 可选 Shop / Carpenter / WizardBuild / AnimalShop / Geode / Festival / Raccoon；ShopId 必须是 Data/Shops 的键（SMAPI 控制台运行 rv_list_shops 查看）；RequiredMod 填模组 UniqueID，未安装时隐藏；Condition 可填 GameStateQuery；LockReason 是灰色时点击显示的提示。",
+  "Shops": []
+}

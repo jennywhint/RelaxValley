@@ -1,4 +1,4 @@
-<frame layout="1200px 800px"
+<frame layout="85% 85%"
        background={@Mods/StardewUI/Sprites/MenuBackground}
        border={@Mods/StardewUI/Sprites/MenuBorder}
        border-thickness="36,36,40,36"
@@ -9,7 +9,7 @@
 
     <scrollable>
       <grid item-layout="length: 280" item-spacing="12,12">
-        <frame *repeat={Goals}
+        <frame *repeat={:Goals}
                layout="stretch content"
                background={@Mods/StardewUI/Sprites/ControlBorder}
                padding="16">

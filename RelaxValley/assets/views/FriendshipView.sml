@@ -1,4 +1,4 @@
-<frame layout="1200px 800px"
+<frame layout="88% 88%"
        background={@Mods/StardewUI/Sprites/MenuBackground}
        border={@Mods/StardewUI/Sprites/MenuBorder}
        border-thickness="36,36,40,36"
@@ -38,18 +38,37 @@
 
     <!-- 右侧列表 -->
     <lane orientation="vertical" layout="stretch stretch">
-      <lane orientation="horizontal" margin="0,0,0,16" vertical-content-alignment="middle">
+      <lane orientation="horizontal" margin="0,0,0,10" vertical-content-alignment="middle">
         <lane orientation="vertical" margin="0,0,24,0">
           <label font="dialogue" text={Title} />
           <label font="small" text={InteractionHint} margin="0,4,0,0" />
         </lane>
-        <textinput layout="240px 40px"
+        <textinput layout="200px 40px"
                    placeholder={SearchPlaceholder}
                    text={<>SearchText}
-                   margin="0,0,16,0" />
-        <dropdown layout="240px 40px"
+                   margin="0,0,12,0" />
+        <dropdown layout="210px 40px"
                   options={:SortOptions}
                   selected-index={<>SelectedSortIndex} />
+      </lane>
+
+      <!-- 操作按钮 -->
+      <lane orientation="horizontal" margin="0,0,0,12" vertical-content-alignment="middle">
+        <frame layout="content content"
+               background={@Mods/StardewUI/Sprites/ControlBorder}
+               padding="14,8"
+               margin="0,0,10,0"
+               left-click=|^TalkAll()|>
+          <label font="small" text={TalkAllText} />
+        </frame>
+        <frame layout="content content"
+               background={@Mods/StardewUI/Sprites/ControlBorder}
+               padding="14,8"
+               margin="0,0,16,0"
+               left-click=|^LocateBirthdayNpc()|>
+          <label font="small" text={LocateBirthdayText} />
+        </frame>
+        <label font="small" text={PinHint} />
       </lane>
 
       <scrollable layout="stretch stretch">
@@ -60,11 +79,24 @@
                  padding="16"
                  opacity={:CardOpacity}
                  left-click=|^OnFriendClicked(NpcName)|
+                 right-click=|^OnFriendRightClicked(NpcName)|
                  pointer-enter=|^OnFriendHovered(NpcName)|
                  pointer-leave=|^OnFriendUnhovered()|
                  tooltip={:TooltipText}>
             <lane orientation="vertical">
-              <label font="dialogue" text={:DisplayName} color={:NameColor} />
+              <lane orientation="horizontal" vertical-content-alignment="middle">
+                <label font="dialogue" text={:DisplayName} color={:NameColor} />
+                <label *if={:IsPinned}
+                       font="small"
+                       text={:PinText}
+                       color="#C08A20"
+                       margin="8,0,0,0" />
+              </lane>
+              <label *if={:IsBirthday}
+                     font="small"
+                     text={:BirthdayText}
+                     color="#D955A0"
+                     margin="0,4,0,0" />
               <label font="small" text={:HeartText} color={:TextColor} margin="0,6,0,0" />
               <label font="small" text={:GiftsThisWeekText} color={:TextColor} margin="0,4,0,0" />
               <label font="small" text={:GiftStatus} color={:GiftColor} margin="0,4,0,0" />
