@@ -42,11 +42,14 @@ public sealed class MainMenuViewModel : INotifyPropertyChanged, ICloseAware
 {
     private const string WorkbenchEntryId = "Workbench";
 
+    /// <summary>主菜单置顶条目存在玩家 modData 里，随存档独立保存。</summary>
+    private const string PinnedEntriesKey = "Awassakura.RelaxValley/PinnedEntries";
+
     private readonly IReadOnlyList<MenuEntry> _mainEntries;
     private readonly Func<IReadOnlyList<MenuEntry>> _workbenchEntriesFactory;
     private readonly ITranslationHelper _translation;
     private readonly IMonitor _monitor;
-    private readonly Action<string>? _onRowRightClick;
+    private readonly HashSet<string> _pinnedEntries;
 
     private IReadOnlyList<MenuEntry> _currentEntries;
     private bool _isMainPage;
@@ -58,14 +61,13 @@ public sealed class MainMenuViewModel : INotifyPropertyChanged, ICloseAware
         IReadOnlyList<MenuEntry> mainEntries,
         Func<IReadOnlyList<MenuEntry>> workbenchEntriesFactory,
         ITranslationHelper translation,
-        IMonitor monitor,
-        Action<string>? onRowRightClick = null)
+        IMonitor monitor)
     {
         _mainEntries = mainEntries;
         _workbenchEntriesFactory = workbenchEntriesFactory;
         _translation = translation;
         _monitor = monitor;
-        _onRowRightClick = onRowRightClick;
+        _pinnedEntries = LoadPinnedEntries();
         _currentEntries = mainEntries;
         _isMainPage = true;
 
@@ -73,6 +75,27 @@ public sealed class MainMenuViewModel : INotifyPropertyChanged, ICloseAware
         Hint = translation.Get("RelaxValley.UI.MainMenu.CloseHint");
         BackText = translation.Get("RelaxValley.UI.MainMenu.BackToMain");
         Sections = BuildSections();
+    }
+
+    /// <summary>读取置顶记录（modData，逗号分隔条目 Id）。</summary>
+    private static HashSet<string> LoadPinnedEntries()
+    {
+        string raw = "";
+        if (Game1.player is not null
+            && Game1.player.modData.TryGetValue(PinnedEntriesKey, out string? value))
+        {
+            raw = value ?? "";
+        }
+
+        return new HashSet<string>(
+            raw.Split(',', StringSplitOptions.RemoveEmptyEntries),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void SavePinnedEntries()
+    {
+        if (Game1.player is null) return;
+        Game1.player.modData[PinnedEntriesKey] = string.Join(",", _pinnedEntries);
     }
 
     /// <summary>由宿主菜单在控制器创建后注入“真正关闭菜单”的动作。</summary>
@@ -104,7 +127,7 @@ public sealed class MainMenuViewModel : INotifyPropertyChanged, ICloseAware
 
     public bool ShowBack => !_isMainPage;
 
-    private List<MenuSection> _sections;
+    private List<MenuSection> _sections = new();
     public List<MenuSection> Sections
     {
         get => _sections;
@@ -148,9 +171,32 @@ public sealed class MainMenuViewModel : INotifyPropertyChanged, ICloseAware
         entry.TryExecute(_monitor);
     }
 
+    /// <summary>
+    /// 右键条目：「左键原版 / 右键模组」——条目自带更详细页面时执行它；
+    /// 否则右键 = 置顶切换（置顶条目提到列表最前的「常用」区）。
+    /// </summary>
     public void OnRowRightClicked(string id)
     {
-        _onRowRightClick?.Invoke(id);
+        MenuEntry? entry = _currentEntries.FirstOrDefault(e => e.Id == id);
+        if (entry is null) return;
+
+        if (entry.RightExecute is not null)
+        {
+            entry.RightExecute.Invoke(entry);
+            return;
+        }
+
+        TogglePin(id);
+    }
+
+    private void TogglePin(string id)
+    {
+        if (!_pinnedEntries.Remove(id))
+            _pinnedEntries.Add(id);
+
+        SavePinnedEntries();
+        Game1.playSound("smallSelect");
+        Sections = BuildSections();
     }
 
     public void GoToWorkbench()
@@ -199,7 +245,20 @@ public sealed class MainMenuViewModel : INotifyPropertyChanged, ICloseAware
         MenuSection? current = null;
         string? lastCategory = null;
 
-        foreach (MenuEntry entry in _currentEntries.Where(e => e.IsVisible))
+        // 常用区：置顶条目提到最前，原位置不再重复显示
+        List<MenuEntry> visibleEntries = _currentEntries.Where(e => e.IsVisible).ToList();
+        List<MenuEntry> pinnedEntries = visibleEntries.Where(e => _pinnedEntries.Contains(e.Id)).ToList();
+
+        if (pinnedEntries.Count > 0)
+        {
+            string header = _translation.Get("RelaxValley.UI.MainMenu.PinnedHeader");
+            var pinnedSection = new MenuSection { Header = $"--- {header} ---" };
+            foreach (MenuEntry entry in pinnedEntries)
+                pinnedSection.Entries.Add(CreateRow(entry));
+            sections.Add(pinnedSection);
+        }
+
+        foreach (MenuEntry entry in visibleEntries.Where(e => !_pinnedEntries.Contains(e.Id)))
         {
             if (!string.IsNullOrEmpty(entry.Category) && entry.Category != lastCategory)
             {
@@ -215,22 +274,28 @@ public sealed class MainMenuViewModel : INotifyPropertyChanged, ICloseAware
             current ??= new MenuSection();
             if (!sections.Contains(current)) sections.Add(current);
 
-            MenuEntryStatus status = entry.GetStatus();
-            bool available = status == MenuEntryStatus.Available;
-
-            current.Entries.Add(new MenuRow
-            {
-                Id = entry.Id,
-                Text = ResolveName(entry) + ResolveSuffix(entry),
-                CanClick = available,
-                Opacity = available ? 1f : 0.55f,
-                TextColor = available ? "#3B2A1E" : "#8A8580",
-                ClickAction = row => OnRowClicked(row.Id),
-                RightClickAction = row => OnRowRightClicked(row.Id)
-            });
+            current.Entries.Add(CreateRow(entry));
         }
 
         return sections;
+    }
+
+    private MenuRow CreateRow(MenuEntry entry)
+    {
+        MenuEntryStatus status = entry.GetStatus();
+        bool available = status == MenuEntryStatus.Available;
+        string pinnedMark = _pinnedEntries.Contains(entry.Id) ? "★ " : "";
+
+        return new MenuRow
+        {
+            Id = entry.Id,
+            Text = pinnedMark + ResolveName(entry) + ResolveSuffix(entry),
+            CanClick = available,
+            Opacity = available ? 1f : 0.55f,
+            TextColor = available ? "#3B2A1E" : "#8A8580",
+            ClickAction = row => OnRowClicked(row.Id),
+            RightClickAction = row => OnRowRightClicked(row.Id)
+        };
     }
 
     private string ResolveName(MenuEntry entry)

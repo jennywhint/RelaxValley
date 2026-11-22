@@ -1,6 +1,7 @@
 using RelaxValley.Framework.Shops;
 using RelaxValley.Framework.UI;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using StardewModdingAPI;
 using StardewUI.Framework;
 using StardewValley;
@@ -10,7 +11,6 @@ using StardewValley.Triggers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using StardewValley.Objects;
 using StardewValley.WorldMaps;
 
@@ -24,11 +24,54 @@ public sealed class MenuRegistry
     private readonly IModHelper _helper;
     private readonly ShopRegistry _shops;
 
+    /// <summary>外部模组通过公开 API 注册的条目（显示在工作室「模组支持」分类）。</summary>
+    private readonly List<MenuEntry> _externalEntries = new();
+    private readonly HashSet<string> _externalIds = new(StringComparer.OrdinalIgnoreCase);
+
     public MenuRegistry(IMonitor monitor, IModHelper helper)
     {
         _monitor = monitor;
         _helper = helper;
         _shops = new ShopRegistry(helper, monitor);
+    }
+
+    /// <summary>
+    /// 公开 API：注册外部模组的菜单条目。Id 重复时注册失败（返回 false）。
+    /// </summary>
+    public bool RegisterExternalEntry(string id, string name, Action onOpen)
+    {
+        if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name) || onOpen is null)
+            return false;
+
+        if (!_externalIds.Add(id))
+        {
+            _monitor.Log($"外部模组条目 '{id}' 注册失败：Id 已被占用。", LogLevel.Trace);
+            return false;
+        }
+
+        _externalEntries.Add(new MenuEntry(
+            id: id,
+            execute: _ =>
+            {
+                // 与内部条目一致：先关闭 Relax Valley 菜单，再把控制权交给外部动作
+                if (TryPrepareMenu())
+                    onOpen();
+            },
+            category: "WorkbenchModSupport",
+            displayName: name));
+
+        _monitor.Log($"外部模组条目 '{id}'（{name}）已注册。", LogLevel.Info);
+        return true;
+    }
+
+    /// <summary>公开 API：注销外部模组的菜单条目。</summary>
+    public bool UnregisterExternalEntry(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return false;
+        if (!_externalIds.Remove(id)) return false;
+
+        _externalEntries.RemoveAll(e => e.Id == id);
+        return true;
     }
 
     public IReadOnlyList<MenuEntry> GetMainMenuEntries()
@@ -40,21 +83,45 @@ public sealed class MenuRegistry
             new MenuEntry("QuestBoard",         OpenQuestBoard,        category: "Info"),
             new MenuEntry("QuestOverview",      OpenQuestOverview,     category: "Info"),
             new MenuEntry("SpecialOrder",       OpenSpecialOrder,      category: "Info"),
-            new MenuEntry("WalnutRoomOrder",    OpenWalnutRoomOrder,   category: "Info"),
+            new MenuEntry("WalnutRoomOrder",    OpenWalnutRoomOrder,   category: "Info",
+                status: () => ModEntry.Config.RespectVanillaGates && !IslandWest.IsQiWalnutRoomDoorUnlocked(out _)
+                    ? MenuEntryStatus.Locked
+                    : MenuEntryStatus.Available,
+                lockReason: () => I18n.RelaxValley_UI_WalnutRoom_Locked()),
             new MenuEntry("FarmComputer",       OpenFarmComputer,      category: "Info"),
-            new MenuEntry("MonsterKill", OpenMonsterKill, category: "Info"),
-            new MenuEntry("CasinoStatistic", OpenCasinoStatistic, category: "Info"),
-            new MenuEntry("PerfectionTracker", OpenPerfectionTracker, category: "Info"),
+            new MenuEntry("MonsterKill", OpenMonsterKill, category: "Info",
+                rightExecute: OpenExternalPerfectionPage),
+            new MenuEntry("CasinoStatistic", OpenCasinoStatistic, category: "Info",
+                status: () => ModEntry.Config.RespectVanillaGates && !Game1.player.hasRustyKey
+                    ? MenuEntryStatus.Locked
+                    : MenuEntryStatus.Available,
+                lockReason: () => I18n.RelaxValley_UI_Casino_Locked()),
+            new MenuEntry("PerfectionTracker", OpenPerfectionTracker, category: "Info",
+                rightExecute: OpenExternalPerfectionPage),
+            new MenuEntry("RecipeStats", OpenRecipeStats, category: "Info",
+                rightExecute: OpenRecipeStatsMod),
+            new MenuEntry("FarmAnimals", OpenFarmAnimals, category: "Info",
+                rightExecute: OpenFarmAnimalsMod),
+            new MenuEntry("FishingInfo", OpenFishingInfo, category: "Info"),
             new MenuEntry("GoldenWalnutsInfo",  OpenGoldenWalnutsInfo, category: "Info",
                 condition: () => Game1.netWorldState.Value.GoldenWalnuts > 0),
+            new MenuEntry("Museum",             OpenMuseum,            category: "Info"),
             new MenuEntry("FriendshipData", OpenFriendship, category: "Info"),
 
             // ═════════════ B. 地图与传送 ═════════════
+            // 仅开放「当前地图」；世界地图传送与各区域地图入口暂时隐藏，
+            // 功能代码保留在下方（恢复时取消注释）。
             new MenuEntry("LocationMap",        OpenCurrentMap,        category: "Map"),
+            /*
+            new MenuEntry("WorldMap",           OpenWorldMap,          category: "Map"),
             new MenuEntry("FarmMap",            OpenFarmMap,           category: "Map"),
             new MenuEntry("GingerMap",          OpenGingerMap,         category: "Map"),
-            new MenuEntry("SVEMap",             OpenSveMap,            category: "Map"),
-            new MenuEntry("RidgesideMap",       OpenRidgesideMap,      category: "Map"),
+            // 模组地图：未安装对应模组时隐藏（发布视角——纯原版玩家不出现装不了的条目）
+            new MenuEntry("SVEMap",             OpenSveMap,            category: "Map",
+                condition: () => _helper.ModRegistry.IsLoaded("FlashShifter.StardewValleyExpandedCP")),
+            new MenuEntry("RidgesideMap",       OpenRidgesideMap,      category: "Map",
+                condition: () => _helper.ModRegistry.IsLoaded("Rafseazz.RidgesideVillage")),
+            */
 
             // ═════════════ C. 远程电梯 ═════════════
             new MenuEntry("MineElevator",       OpenMineElevator,      category: "Elevator",
@@ -86,6 +153,7 @@ public sealed class MenuRegistry
         entries.Add(new MenuEntry("PrizeMachine", OpenPrizeMachine, category: "WorkbenchBasic"));
         entries.Add(new MenuEntry("BobberMachine", OpenBobberMachine, category: "WorkbenchBasic"));
         entries.Add(new MenuEntry("UnifyFlowerColor", UnifyFlowerColor, category: "WorkbenchBasic"));
+        entries.Add(new MenuEntry("Forge", OpenForge, category: "WorkbenchBasic"));
 
         // ── B. 建造与升级 + 原版商店（保持原版顺序） ──
         List<ShopDefinition> definitions = _shops.GetDefinitions().ToList();
@@ -125,6 +193,9 @@ public sealed class MenuRegistry
             OpenRsvQuestBoard,
             category: "WorkbenchModSupport",
             condition: () => _helper.ModRegistry.IsLoaded("Rafseazz.RidgesideVillage")));
+
+        // 外部模组通过公开 API 注册的条目追加在「模组支持」分类末尾
+        entries.AddRange(_externalEntries);
 
         return entries;
     }
@@ -191,6 +262,14 @@ public sealed class MenuRegistry
         Game1.playSound("bigSelect");
     }
 
+    /// <summary>火山锻造台：原版火山锻冶界面（附魔 / 合并 / 宝石镶嵌，流程全部由游戏本体处理）。</summary>
+    private void OpenForge(MenuEntry __)
+    {
+        if (!TryPrepareMenu()) return;
+        Game1.activeClickableMenu = new ForgeMenu();
+        Game1.playSound("bigSelect");
+    }
+
     private void OpenWizardShrine(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
@@ -245,7 +324,7 @@ public sealed class MenuRegistry
             }
         }
         _monitor.Log("找不到祝尼魔箱。", LogLevel.Warn);
-        Game1.showGlobalMessage("找不到祝尼魔箱，请先放置一个。");
+        Game1.showGlobalMessage(I18n.RelaxValley_UI_Workbench_JunimoChestMissing());
     }
 
     private void OpenShippingBin(MenuEntry __)
@@ -263,7 +342,7 @@ public sealed class MenuRegistry
         else
         {
             _monitor.Log("找不到出货箱。", LogLevel.Warn);
-            Game1.showGlobalMessage("找不到出货箱。");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Workbench_ShippingBinMissing());
         }
     }
 
@@ -283,7 +362,7 @@ public sealed class MenuRegistry
             }
         }
         _monitor.Log("农舍里没有梳妆台。", LogLevel.Warn);
-        Game1.showGlobalMessage("农舍里没有梳妆台。");
+        Game1.showGlobalMessage(I18n.RelaxValley_UI_Workbench_DresserMissing());
     }
 
     /// <summary>精通技能：1.6 的 MasteryTrackerMenu。</summary>
@@ -342,7 +421,7 @@ public sealed class MenuRegistry
         if (viewEngine is null)
         {
             _monitor.Log("StardewUI API 不可用，无法打开任务一览。", LogLevel.Warn);
-            Game1.showGlobalMessage("任务一览需要 StardewUI。");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_StardewUIRequired());
             return;
         }
 
@@ -405,7 +484,13 @@ public sealed class MenuRegistry
         if (farmComputer == null)
         {
             _monitor.Log("背包里和地图上都没有找到农场电脑。", LogLevel.Warn);
-            Game1.showGlobalMessage("没有找到农场电脑（背包里或已放置在某个地点）。");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Workbench_FarmComputerMissing());
+            return;
+        }
+
+        if (Game1.currentLocation is null)
+        {
+            _monitor.Log("当前地点未知，无法打开农场电脑。", LogLevel.Warn);
             return;
         }
 
@@ -433,7 +518,7 @@ public sealed class MenuRegistry
         if (viewEngine is null)
         {
             _monitor.Log("StardewUI API 不可用，无法打开杀怪统计。", LogLevel.Error);
-            Game1.showGlobalMessage("杀怪统计需要 StardewUI。");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_StardewUIRequired());
             return;
         }
 
@@ -444,7 +529,7 @@ public sealed class MenuRegistry
         if (menu is null)
         {
             _monitor.Log($"无法创建 MonsterKillView：{assetName}", LogLevel.Error);
-            Game1.showGlobalMessage("杀怪统计界面加载失败。");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_ViewLoadFailed());
             return;
         }
 
@@ -471,6 +556,127 @@ public sealed class MenuRegistry
         Game1.currentLocation?.ShowQiCat();
     }
 
+    /// <summary>配方统计：左键查看原版配方（原版制作菜单独立打开，顶部附「已学 X / Y」进度，总数动态含模组配方）。</summary>
+    private void OpenRecipeStats(MenuEntry __)
+    {
+        if (!TryPrepareMenu()) return;
+
+        Game1.activeClickableMenu = new RecipeStatsPage(
+            (Game1.uiViewport.Width - 800) / 2,
+            Math.Max(0, (Game1.uiViewport.Height - 600) / 2),
+            800,
+            600,
+            cooking: false,
+            standaloneMenu: true);
+
+        Game1.playSound("bigSelect");
+    }
+
+    /// <summary>配方统计右键：完美手册的烹饪 / 制作配方进度页（无需道具）。</summary>
+    private void OpenRecipeStatsMod(MenuEntry __) => OpenExternalPerfectionPage(__);
+
+    /// <summary>动物页：左键查看农场动物概览（原版数据自绘页面）。</summary>
+    private void OpenFarmAnimals(MenuEntry __)
+    {
+        if (!TryPrepareMenu()) return;
+
+        var viewEngine = ModEntry.ViewEngine;
+        if (viewEngine is null)
+        {
+            _monitor.Log("StardewUI API 不可用，无法打开农场动物。", LogLevel.Error);
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_StardewUIRequired());
+            return;
+        }
+
+        var model = new FarmAnimalsViewModel(_helper.Translation);
+        var menu = viewEngine.CreateMenuFromAsset(
+            $"Mods/{ModEntry.Instance.ModManifest.UniqueID}/Views/FarmAnimalsView",
+            model);
+
+        if (menu is null)
+        {
+            _monitor.Log("无法创建 FarmAnimalsView", LogLevel.Error);
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_ViewLoadFailed());
+            return;
+        }
+
+        Game1.activeClickableMenu = menu;
+        Game1.playSound("bigSelect");
+    }
+
+    /// <summary>动物页右键：调用更详细的模组页面（GMCM 配置菜单类型，默认空）。</summary>
+    private void OpenFarmAnimalsMod(MenuEntry __)
+    {
+        if (!TryPrepareMenu()) return;
+
+        foreach (string typeName in ModEntry.Config.StatsMenuTypes)
+        {
+            if (string.IsNullOrWhiteSpace(typeName)) continue;
+
+            try
+            {
+                Type? type = Type.GetType(typeName);
+                if (type is null) continue;
+
+                if (Activator.CreateInstance(type) is IClickableMenu menu)
+                {
+                    Game1.activeClickableMenu = menu;
+                    Game1.playSound("bigSelect");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _monitor.Log($"打开外接动物页面失败（类型 {typeName}）：{ex.Message}", LogLevel.Warn);
+            }
+        }
+
+        Game1.showGlobalMessage(I18n.RelaxValley_UI_Animals_NoExternal());
+    }
+
+    /// <summary>钓鱼情报：按当前季节 / 天气 / 时间模拟原版垂钓判定，列出当前可钓到的物品与占比。卡片悬浮含原版收藏页同款信息，F1 可查询。</summary>
+    private void OpenFishingInfo(MenuEntry __)
+    {
+        if (!TryPrepareMenu()) return;
+
+        var viewEngine = ModEntry.ViewEngine;
+        if (viewEngine is null)
+        {
+            _monitor.Log("StardewUI API 不可用，无法打开钓鱼情报。", LogLevel.Error);
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_StardewUIRequired());
+            return;
+        }
+
+        var location = Game1.currentLocation;
+        if (location is null) return;
+
+        // F1 桥接只在 StardewUI fork 上可用；官方版走无桥接模板，避免绑定报错刷屏
+        bool bridge = StardewUIF1Bridge.EnsureRegistered();
+        string assetName = bridge ? "FishingInfoView" : "FishingInfoViewPlain";
+        var model = FishingInfoViewModel.Build(location, Game1.player);
+        var menu = viewEngine.CreateMenuFromAsset($"Mods/{ModEntry.Instance.ModManifest.UniqueID}/Views/{assetName}", model);
+
+        if (menu is null)
+        {
+            _monitor.Log($"无法创建钓鱼情报界面：{assetName}", LogLevel.Error);
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_ViewLoadFailed());
+            return;
+        }
+
+        Game1.activeClickableMenu = menu;
+        Game1.playSound("bigSelect");
+    }
+
+    /// <summary>博物馆收藏：逐件列出可捐赠物品（矿物 / 古物）与捐赠状态。可捐判定用原版 IsItemSuitableForDonation，模组物品自动计入。</summary>
+    private void OpenMuseum(MenuEntry __)
+    {
+        if (!TryPrepareMenu()) return;
+
+        // F1 桥接（hovered-subject 绑定）只在 StardewUI fork 上可用；官方版走无桥接模板，避免绑定报错刷屏
+        bool bridge = StardewUIF1Bridge.EnsureRegistered();
+        ShowView(bridge ? "MuseumView" : "MuseumViewPlain", MuseumViewModel.Build());
+    }
+
     private void OpenFriendship(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
@@ -479,18 +685,23 @@ public sealed class MenuRegistry
         if (viewEngine is null)
         {
             _monitor.Log("StardewUI API 不可用，无法打开村民友谊。", LogLevel.Error);
-            Game1.showGlobalMessage("村民友谊需要 StardewUI。");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_StardewUIRequired());
             return;
         }
 
-        var model = new FriendshipViewModel(_helper.Translation, ModEntry.Config.FriendshipProgressMode);
+        var model = new FriendshipViewModel(
+            _helper.Translation,
+            ModEntry.Config.FriendshipProgressMode,
+            ModEntry.Config.EnableTalkAll,
+            ModEntry.Config.EnableFriendshipTeleport,
+            ModEntry.Config.EnableBatchGift);
         string assetName = $"Mods/{ModEntry.Instance.ModManifest.UniqueID}/Views/FriendshipView";
         var menu = viewEngine.CreateMenuFromAsset(assetName, model);
 
         if (menu is null)
         {
             _monitor.Log($"无法创建 FriendshipView：{assetName}", LogLevel.Error);
-            Game1.showGlobalMessage("村民友谊界面加载失败。");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_ViewLoadFailed());
             return;
         }
 
@@ -512,8 +723,7 @@ public sealed class MenuRegistry
         {
             details.Add(_helper.Translation
                 .Get(I18n.Keys.RelaxValley_Menu_GoldenWalnutsInfo_RoomLocked)
-                .Tokens(new { count = (100 - found).ToString() })
-                .ToString());
+                .Tokens(new { count = (100 - found).ToString() }));
         }
         else
         {
@@ -525,8 +735,7 @@ public sealed class MenuRegistry
         {
             details.Add(_helper.Translation
                 .Get(I18n.Keys.RelaxValley_Menu_GoldenWalnutsInfo_Parrot)
-                .Tokens(new { price = (remaining * 10000).ToString("N0") })
-                .ToString());
+                .Tokens(new { price = (remaining * 10000).ToString("N0") }));
         }
 
         details.Add(I18n.RelaxValley_Menu_GoldenWalnutsInfo_Note());
@@ -543,8 +752,7 @@ public sealed class MenuRegistry
               {
                   found = found.ToString(),
                   total = TotalGoldenWalnuts.ToString()
-              })
-              .ToString(),
+              }),
             $"{found} / {TotalGoldenWalnuts}（{percent}%）",
             details,
             I18n.RelaxValley_Menu_GoldenWalnutsInfo_Hint());
@@ -554,8 +762,30 @@ public sealed class MenuRegistry
 
     // ═════════════ B. 地图与传送 ═════════════
 
-    /// <summary>当前位置：原版世界地图 + 点击传送。</summary>
+    /// <summary>
+    /// 当前地图：用原版 mapDisplayDevice 把当前地图渲染成纹理（自动裁出内容边界），
+    /// 打开可拖拽 / 缩放的查看器（LocationMapMenu），初始铺满内容区。
+    /// </summary>
     private void OpenCurrentMap(MenuEntry __)
+    {
+        if (!TryPrepareMenu()) return;
+        if (Game1.currentLocation is null) return;
+
+        var rendered = LocationMapRenderer.Render(Game1.currentLocation);
+        if (rendered is null)
+        {
+            _monitor.Log($"渲染当前地图失败：{Game1.currentLocation.Name}", LogLevel.Warn);
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_LocationMap_Unavailable());
+            return;
+        }
+
+        Game1.activeClickableMenu = new LocationMapMenu(rendered.Value);
+        Game1.playSound("bigSelect");
+    }
+
+    /*
+    /// <summary>世界地图：原版世界地图 + 点击传送。</summary>
+    private void OpenWorldMap(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
         Game1.activeClickableMenu = new TeleportMapPage();
@@ -666,6 +896,7 @@ public sealed class MenuRegistry
                 });
             });
     }
+    */
 
     // ═════════════ C. 远程电梯 ═════════════
 
@@ -724,7 +955,7 @@ public sealed class MenuRegistry
         if (deepestSkullLevel < 1)
         {
             _monitor.Log("尚未解锁骷髅矿洞，无法使用电梯。", LogLevel.Info);
-            Game1.showGlobalMessage("尚未解锁骷髅矿洞，请先获得头骨钥匙。");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_SkullElevator_Locked());
             return;
         }
 
@@ -781,8 +1012,7 @@ public sealed class MenuRegistry
             GetMainMenuEntries(),
             GetWorkbenchEntries,
             _helper.Translation,
-            _monitor,
-            onRowRightClick: HandleRowRightClick);
+            _monitor);
 
         IMenuController? controller = CreateView("MainMenuView", model);
         if (controller is null) return;
@@ -795,125 +1025,57 @@ public sealed class MenuRegistry
         Game1.playSound("bigSelect");
     }
 
-    /// <summary>主菜单右键：目前只有「完美度追踪」有外接页面。</summary>
-    private void HandleRowRightClick(string id)
-    {
-        if (id == "PerfectionTracker")
-            OpenExternalPerfectionPage();
-    }
-
     /// <summary>
-    /// 右键「完美度追踪」：打开其它完美度模组的页面。
-    /// 依次尝试：完美手册的触发器动作（作者公开入口，无需道具）→
-    /// 反射其公开方法 → GMCM 配置的菜单类型 → GMCM 配置的物品。
+    /// 右键「完美度追踪」：打开完美手册（mushymato.PerfectionHandbook）的页面。
+    /// 只走它自己注册的触发器动作（作者的公开入口，无需道具）；
+    /// 未安装或调用失败不做其它兜底。
     /// </summary>
-    private void OpenExternalPerfectionPage()
+    private void OpenExternalPerfectionPage(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
+        if (Game1.currentLocation is null) return;
 
-        // 1) 完美手册（mushymato.PerfectionHandbook）注册的触发器动作
-        if (_helper.ModRegistry.IsLoaded("mushymato.PerfectionHandbook"))
+        if (!_helper.ModRegistry.IsLoaded("mushymato.PerfectionHandbook"))
         {
-            try
-            {
-                if (TriggerActionManager.TryRunAction(
-                        "mushymato.PerfectionHandbook_ShowHandbook",
-                        out string error,
-                        out Exception exception))
-                {
-                    Game1.playSound("bigSelect");
-                    return;
-                }
-
-                _monitor.Log($"完美手册触发器未执行：{error} {exception?.Message}", LogLevel.Trace);
-            }
-            catch (Exception ex)
-            {
-                _monitor.Log($"完美手册触发器调用失败：{ex.Message}", LogLevel.Trace);
-            }
-        }
-
-        // 2) 反射调用其公开入口 PerfectionHandbook.MenuHandler.ShowHandbook()
-        try
-        {
-            Type? handler = Type.GetType("PerfectionHandbook.MenuHandler, PerfectionHandbook");
-            MethodInfo? show = handler?.GetMethod(
-                "ShowHandbook",
-                BindingFlags.Public | BindingFlags.Static,
-                null,
-                Type.EmptyTypes,
-                null);
-
-            if (handler is not null && show is not null)
-            {
-                show.Invoke(null, null);
-                Game1.playSound("bigSelect");
-                return;
-            }
-        }
-        catch (Exception ex)
-        {
-            _monitor.Log($"反射调用完美手册失败：{ex.Message}", LogLevel.Trace);
-        }
-
-        // 3) GMCM 配置的菜单类型
-        foreach (string typeName in ModEntry.Config.PerfectionMenuTypes)
-        {
-            if (string.IsNullOrWhiteSpace(typeName)) continue;
-
-            try
-            {
-                Type? type = Type.GetType(typeName);
-                if (type is null) continue;
-
-                if (Activator.CreateInstance(type) is IClickableMenu menu)
-                {
-                    Game1.activeClickableMenu = menu;
-                    Game1.playSound("bigSelect");
-                    return;
-                }
-            }
-            catch (Exception ex)
-            {
-                _monitor.Log($"打开外接完美度页面失败（类型 {typeName}）：{ex.Message}", LogLevel.Warn);
-            }
-        }
-
-        // 4) GMCM 配置的物品（例如完美手册实体）
-        foreach (string configuredName in ModEntry.Config.PerfectionItems)
-        {
-            if (string.IsNullOrWhiteSpace(configuredName)) continue;
-
-            StardewValley.Object? item = Game1.player.Items
-                .OfType<StardewValley.Object>()
-                .FirstOrDefault(i =>
-                    string.Equals(i.ItemId, configuredName, StringComparison.OrdinalIgnoreCase)
-                    || i.Name.Contains(configuredName, StringComparison.OrdinalIgnoreCase)
-                    || i.DisplayName.Contains(configuredName, StringComparison.OrdinalIgnoreCase));
-
-            if (item is null) continue;
-
-            GameLocation? originalLocation = item.Location;
-            item.Location = Game1.currentLocation;
-
-            try
-            {
-                Game1.playSound("bigSelect");
-                item.checkForAction(Game1.player);
-            }
-            catch (Exception ex)
-            {
-                _monitor.Log($"打开外接完美度页面失败（物品）：{ex}", LogLevel.Error);
-            }
-            finally
-            {
-                item.Location = originalLocation;
-            }
-
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Perfection_NoExternal());
             return;
         }
 
-        Game1.showGlobalMessage(I18n.RelaxValley_UI_Perfection_NoExternal());
+        try
+        {
+            if (TriggerActionManager.TryRunAction(
+                    "mushymato.PerfectionHandbook_ShowHandbook",
+                    out string error,
+                    out Exception exception))
+            {
+                return;
+            }
+
+            _monitor.Log($"完美手册触发器未执行：{error} {exception?.Message}", LogLevel.Trace);
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Perfection_InvokeFailed());
+        }
+        catch (Exception ex)
+        {
+            _monitor.Log($"完美手册触发器调用失败：{ex.Message}", LogLevel.Trace);
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Perfection_InvokeFailed());
+        }
+    }
+
+    /// <summary>
+    /// 列出所有条目 Id 与分类，供 config.json 的 MenuShortcutKeys 配置快捷键时对照。
+    /// 只读取注册表，不执行任何条目。
+    /// </summary>
+    public List<(string Id, string Category)> GetAllEntrySummaries()
+    {
+        var list = new List<(string, string)>();
+
+        foreach (MenuEntry entry in GetMainMenuEntries())
+            list.Add((entry.Id, entry.Category));
+
+        foreach (MenuEntry entry in GetWorkbenchEntries())
+            list.Add((entry.Id, entry.Category));
+
+        return list;
     }
 
     /// <summary>快捷键执行：按 Id 在主菜单 + 工作室条目里查找并执行。</summary>
@@ -959,7 +1121,7 @@ public sealed class MenuRegistry
         if (viewEngine is null)
         {
             _monitor.Log("StardewUI API 不可用，无法打开界面。", LogLevel.Error);
-            Game1.showGlobalMessage("该界面需要 StardewUI。");
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_StardewUIRequired());
             return null;
         }
 

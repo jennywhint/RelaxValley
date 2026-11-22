@@ -361,3 +361,11 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# SMAPI build output (ModBuildConfig deploy target)
+.smapi-mod/
+RelaxValley/
+
+# OS junk
+Thumbs.db
+.DS_Store

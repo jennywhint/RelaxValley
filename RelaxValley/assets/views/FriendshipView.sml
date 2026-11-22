@@ -26,6 +26,46 @@
           <label font="small" text={PreviewPointsText} margin="0,10,0,0" />
           <label font="small" text={PreviewLocationText} margin="0,4,0,0" />
           <label font="small" text={PreviewScheduleText} margin="0,4,0,0" />
+          <label *if={HasIndividualLoved}
+                 font="small"
+                 text={FavoriteLabel}
+                 color="#D955A0"
+                 margin="0,10,0,0" />
+          <grid *if={HasIndividualLoved} item-layout="length: 36" item-spacing="3,4" margin="0,6,0,0">
+            <image *repeat={IndividualLovedIcons}
+                   layout="32px 32px"
+                   sprite={:Sprite} />
+          </grid>
+          <label *if={HasIndividualLiked}
+                 font="small"
+                 text={LikeLabel}
+                 color="#7A5230"
+                 margin="0,10,0,0" />
+          <grid *if={HasIndividualLiked} item-layout="length: 36" item-spacing="3,4" margin="0,6,0,0">
+            <image *repeat={IndividualLikedIcons}
+                   layout="32px 32px"
+                   sprite={:Sprite} />
+          </grid>
+          <label *if={HasUniversalLoved}
+                 font="small"
+                 text={UniversalFavoriteLabel}
+                 color="#D955A0"
+                 margin="0,10,0,0" />
+          <grid *if={HasUniversalLoved} item-layout="length: 36" item-spacing="3,4" margin="0,6,0,0">
+            <image *repeat={UniversalLovedIcons}
+                   layout="32px 32px"
+                   sprite={:Sprite} />
+          </grid>
+          <label *if={HasUniversalLiked}
+                 font="small"
+                 text={UniversalLikeLabel}
+                 color="#7A5230"
+                 margin="0,10,0,0" />
+          <grid *if={HasUniversalLiked} item-layout="length: 36" item-spacing="3,4" margin="0,6,0,0">
+            <image *repeat={UniversalLikedIcons}
+                   layout="32px 32px"
+                   sprite={:Sprite} />
+          </grid>
         </lane>
         <lane orientation="vertical" layout="stretch stretch"
               horizontal-content-alignment="middle"
@@ -52,18 +92,27 @@
                   selected-index={<>SelectedSortIndex} />
       </lane>
 
-      <!-- 操作按钮 -->
+      <!-- 操作按钮（一键对话是 GMCM 可关功能，默认关闭时隐藏） -->
       <lane orientation="horizontal" margin="0,0,0,12" vertical-content-alignment="middle">
-        <frame layout="content content"
+        <frame *if={ShowTalkAll}
+               layout="content content"
                background={@Mods/StardewUI/Sprites/ControlBorder}
-               padding="14,8"
+               padding="14,11"
                margin="0,0,10,0"
                left-click=|^TalkAll()|>
           <label font="small" text={TalkAllText} />
         </frame>
+        <frame *if={ShowBatchGift}
+               layout="content content"
+               background={@Mods/StardewUI/Sprites/ControlBorder}
+               padding="14,11"
+               margin="0,0,16,0"
+               left-click=|^BatchGift()|>
+          <label font="small" text={BatchGiftText} />
+        </frame>
         <frame layout="content content"
                background={@Mods/StardewUI/Sprites/ControlBorder}
-               padding="14,8"
+               padding="14,11"
                margin="0,0,16,0"
                left-click=|^LocateBirthdayNpc()|>
           <label font="small" text={LocateBirthdayText} />

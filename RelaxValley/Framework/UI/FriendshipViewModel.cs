@@ -38,17 +38,39 @@ public class FriendshipViewModel : INotifyPropertyChanged
     /// </summary>
     private readonly bool _progressMode;
 
+    /// <summary>「一键对话」按钮是否可用（GMCM 开关，默认关闭）。</summary>
+    private readonly bool _talkAllEnabled;
+
+    /// <summary>左键互动菜单里是否提供「传送」选项（GMCM 开关，默认关闭）。</summary>
+    private readonly bool _teleportEnabled;
+
+    /// <summary>「批量送礼」按钮是否可用（GMCM 开关，默认关闭）。</summary>
+    private readonly bool _batchGiftEnabled;
+
+    /// <summary>生日定位模式：今日生日村民浮到列表顶部（紧跟置顶之后）。</summary>
+    private bool _birthdayFirst;
+
     public string Title => I18n.RelaxValley_UI_Friendship_Title();
 
     public string SearchPlaceholder => I18n.RelaxValley_UI_Friendship_SearchPlaceholder();
 
-    public string InteractionHint => I18n.RelaxValley_UI_Friendship_InteractionHint();
+    public string InteractionHint => _teleportEnabled
+        ? I18n.RelaxValley_UI_Friendship_InteractionHintTeleport()
+        : I18n.RelaxValley_UI_Friendship_InteractionHint();
 
     public string PreviewHint => I18n.RelaxValley_UI_Friendship_PreviewHint();
 
     public string TalkAllText => I18n.RelaxValley_UI_Friendship_TalkAll();
 
+    /// <summary>「一键对话」按钮只在 GMCM 开关打开时显示（默认关闭）。</summary>
+    public bool ShowTalkAll => _talkAllEnabled;
+
     public string LocateBirthdayText => I18n.RelaxValley_UI_Friendship_LocateBirthday();
+
+    /// <summary>「批量送礼」按钮只在 GMCM 开关打开时显示（默认关闭）。</summary>
+    public bool ShowBatchGift => _batchGiftEnabled;
+
+    public string BatchGiftText => I18n.RelaxValley_UI_Friendship_BatchGift();
 
     public string PinHint => I18n.RelaxValley_UI_Friendship_PinHint();
 
@@ -117,6 +139,84 @@ public class FriendshipViewModel : INotifyPropertyChanged
         private set => Set(ref _previewHasSprite, value, nameof(PreviewHasSprite));
     }
 
+    // ── 送礼口味推荐（悬停预览） ────────────────────────────────
+
+    /// <summary>口味推荐的单个物品图标。</summary>
+    public sealed class GiftIcon
+    {
+        public Tuple<Texture2D, Rectangle>? Sprite { get; init; }
+
+        public bool HasSprite => Sprite is not null;
+    }
+
+    private List<GiftIcon> _individualLovedIcons = new();
+    public List<GiftIcon> IndividualLovedIcons
+    {
+        get => _individualLovedIcons;
+        private set
+        {
+            if (ReferenceEquals(_individualLovedIcons, value)) return;
+            _individualLovedIcons = value;
+            OnPropertyChanged(nameof(IndividualLovedIcons));
+            OnPropertyChanged(nameof(HasIndividualLoved));
+        }
+    }
+
+    private List<GiftIcon> _individualLikedIcons = new();
+    public List<GiftIcon> IndividualLikedIcons
+    {
+        get => _individualLikedIcons;
+        private set
+        {
+            if (ReferenceEquals(_individualLikedIcons, value)) return;
+            _individualLikedIcons = value;
+            OnPropertyChanged(nameof(IndividualLikedIcons));
+            OnPropertyChanged(nameof(HasIndividualLiked));
+        }
+    }
+
+    private List<GiftIcon> _universalLovedIcons = new();
+    public List<GiftIcon> UniversalLovedIcons
+    {
+        get => _universalLovedIcons;
+        private set
+        {
+            if (ReferenceEquals(_universalLovedIcons, value)) return;
+            _universalLovedIcons = value;
+            OnPropertyChanged(nameof(UniversalLovedIcons));
+            OnPropertyChanged(nameof(HasUniversalLoved));
+        }
+    }
+
+    private List<GiftIcon> _universalLikedIcons = new();
+    public List<GiftIcon> UniversalLikedIcons
+    {
+        get => _universalLikedIcons;
+        private set
+        {
+            if (ReferenceEquals(_universalLikedIcons, value)) return;
+            _universalLikedIcons = value;
+            OnPropertyChanged(nameof(UniversalLikedIcons));
+            OnPropertyChanged(nameof(HasUniversalLiked));
+        }
+    }
+
+    public string FavoriteLabel => I18n.RelaxValley_UI_Friendship_FavoriteLabel();
+
+    public string LikeLabel => I18n.RelaxValley_UI_Friendship_LikeLabel();
+
+    public string UniversalFavoriteLabel => I18n.RelaxValley_UI_Friendship_UniversalFavoriteLabel();
+
+    public string UniversalLikeLabel => I18n.RelaxValley_UI_Friendship_UniversalLikeLabel();
+
+    public bool HasIndividualLoved => IndividualLovedIcons.Count > 0;
+
+    public bool HasIndividualLiked => IndividualLikedIcons.Count > 0;
+
+    public bool HasUniversalLoved => UniversalLovedIcons.Count > 0;
+
+    public bool HasUniversalLiked => UniversalLikedIcons.Count > 0;
+
     // ── 列表与筛选 ───────────────────────────────────────────────
 
     private List<FriendItem> _friends = new();
@@ -166,10 +266,18 @@ public class FriendshipViewModel : INotifyPropertyChanged
         }
     }
 
-    public FriendshipViewModel(ITranslationHelper translations, bool progressMode = true)
+    public FriendshipViewModel(
+        ITranslationHelper translations,
+        bool progressMode = true,
+        bool talkAllEnabled = false,
+        bool teleportEnabled = false,
+        bool batchGiftEnabled = false)
     {
         _translations = translations;
         _progressMode = progressMode;
+        _talkAllEnabled = talkAllEnabled;
+        _teleportEnabled = teleportEnabled;
+        _batchGiftEnabled = batchGiftEnabled;
         _todaysBirthdays = BuildTodaysBirthdays();
         _pinned = LoadPinned();
         _allFriends = BuildFriends();
@@ -297,7 +405,7 @@ public class FriendshipViewModel : INotifyPropertyChanged
         IReadOnlyDictionary<string, Friendship> friendships)
     {
         NPC? npc = Game1.getCharacterFromName(npcName);
-        bool isMet = friendships.TryGetValue(npcName, out Friendship foundFriendship);
+        bool isMet = friendships.TryGetValue(npcName, out Friendship? foundFriendship);
         Friendship? friendship = isMet ? foundFriendship : null;
 
         int maxHearts = npc?.isMarried() == true ? 14 : 10;
@@ -308,7 +416,7 @@ public class FriendshipViewModel : INotifyPropertyChanged
         int giftsThisWeek = friendship?.GiftsThisWeek ?? 0;
 
         string displayName = ResolveDisplayName(npcName, npc, data);
-        string locationName = npc?.currentLocation?.DisplayName;
+        string? locationName = npc?.currentLocation?.DisplayName;
         if (string.IsNullOrWhiteSpace(locationName))
             locationName = I18n.RelaxValley_UI_Friendship_Unknown();
 
@@ -316,19 +424,16 @@ public class FriendshipViewModel : INotifyPropertyChanged
 
         string pointsLabel = _translations
             .Get(I18n.Keys.RelaxValley_UI_Friendship_PreviewPoints)
-            .Tokens(new { points, max = maxPoints })
-            .ToString();
+            .Tokens(new { points, max = maxPoints });
 
         string locationLabel = _translations
             .Get(I18n.Keys.RelaxValley_UI_Friendship_PreviewLocation)
-            .Tokens(new { location = locationName })
-            .ToString();
+            .Tokens(new { location = locationName });
 
         string scheduleLabel = schedule is { } s
             ? _translations
                 .Get(I18n.Keys.RelaxValley_UI_Friendship_PreviewSchedule)
                 .Tokens(new { time = s.Time, location = s.Location })
-                .ToString()
             : I18n.RelaxValley_UI_Friendship_NoSchedule();
 
         string tooltip = pointsLabel + "\n" + locationLabel + "\n" + scheduleLabel;
@@ -402,48 +507,35 @@ public class FriendshipViewModel : INotifyPropertyChanged
     /// </summary>
     private static (string Time, string Location)? GetNextSchedule(NPC? npc)
     {
-        if (npc is null || npc.Schedule is null || npc.Schedule.Count == 0)
-            return null;
+        if (npc is null) return null;
+
+        // 1.6 的日程按需加载：社交面板直接读 Schedule 会一直是空——
+        // 这正是之前所有村民都显示「日程：无」的原因，必须先走原版加载入口
+        try
+        {
+            npc.TryLoadSchedule();
+        }
+        catch
+        {
+            // 个别自定义 NPC 日程数据异常时不影响页面其它功能
+        }
+
+        if (npc.Schedule is null || npc.Schedule.Count == 0) return null;
 
         int now = Game1.timeOfDay;
         var next = npc.Schedule.OrderBy(p => p.Key).FirstOrDefault(p => p.Key > now);
         if (next.Value is null)
-            return null;
+        {
+            // 今日行程已全部走完：显示最后一站（即当前所在处）
+            next = npc.Schedule.OrderBy(p => p.Key).Last();
+        }
 
-        string? target = GetScheduleTargetLocation(next.Value);
-        if (string.IsNullOrWhiteSpace(target))
-            return null;
+        string? target = next.Value.targetLocationName;
+        if (string.IsNullOrWhiteSpace(target)) return null;
 
         string time = $"{next.Key / 100:00}:{next.Key % 100:00}";
         string location = Game1.getLocationFromName(target)?.DisplayName ?? target;
         return (time, location);
-    }
-
-    /// <summary>
-    /// 1.6 里 SchedulePathDescription 的目标地点字段不同版本命名不一致
-    /// （targetLocation / TargetLocation），这里兼容两种写法，避免版本差异导致编译失败。
-    /// </summary>
-    private static string? GetScheduleTargetLocation(object scheduleDescription)
-    {
-        try
-        {
-            var type = scheduleDescription.GetType();
-            const System.Reflection.BindingFlags Flags =
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.Public |
-                System.Reflection.BindingFlags.NonPublic;
-
-            var field = type.GetField("TargetLocation", Flags) ?? type.GetField("targetLocation", Flags);
-            if (field?.GetValue(scheduleDescription) is string fieldValue)
-                return fieldValue;
-
-            var property = type.GetProperty("TargetLocation", Flags) ?? type.GetProperty("targetLocation", Flags);
-            return property?.GetValue(scheduleDescription) as string;
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     // ── 悬停预览 / 左键交互 ─────────────────────────────────────
@@ -481,6 +573,13 @@ public class FriendshipViewModel : INotifyPropertyChanged
             PreviewHasSprite = false;
         }
 
+        // 送礼口味推荐：个人口味与通用口味分开显示（原版 Data/NPCGiftTastes，模组改的数据自动生效）
+        var prefs = GetGiftPreferences(friend.NpcName);
+        IndividualLovedIcons = BuildGiftIcons(prefs.IndividualLoved);
+        IndividualLikedIcons = BuildGiftIcons(prefs.IndividualLiked);
+        UniversalLovedIcons = BuildGiftIcons(prefs.UniversalLoved);
+        UniversalLikedIcons = BuildGiftIcons(prefs.UniversalLiked);
+
         HasPreview = true;
     }
 
@@ -488,6 +587,177 @@ public class FriendshipViewModel : INotifyPropertyChanged
     public void OnFriendUnhovered()
     {
         HasPreview = false;
+        IndividualLovedIcons = new List<GiftIcon>();
+        IndividualLikedIcons = new List<GiftIcon>();
+        UniversalLovedIcons = new List<GiftIcon>();
+        UniversalLikedIcons = new List<GiftIcon>();
+    }
+
+    // ── 送礼口味解析 ────────────────────────────────────────────
+
+    /// <summary>口味解析结果缓存（会话内数据固定，无需重复解析）。</summary>
+    private static readonly Dictionary<string,
+        (List<string> IndividualLoved, List<string> IndividualLiked, List<string> UniversalLoved, List<string> UniversalLiked)> GiftTasteCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>悬停预览里最多显示多少个图标。</summary>
+    private const int MaxGiftIcons = 8;
+
+    /// <summary>
+    /// 从原版 Data/NPCGiftTastes 解析村民最爱 / 喜欢的礼物清单。
+    /// 口味 = 个人条目（字段 5/7/9/11）与通用条目（Universal_Love/Like/Dislike/Hate 的同位字段）合并，
+    /// 优先级与原版 <see cref="NPC.getGiftTasteForThisItem"/> 一致：
+    /// 个人最爱 → 个人喜欢 → 个人不喜欢 → 个人讨厌 → 通用最爱 → 通用喜欢 → 通用不喜欢 → 通用讨厌。
+    /// 模组（CP / 数据编辑）改过的内容在 Game1.NPCGiftTastes 里即为最终值，自动生效。
+    /// </summary>
+    private static (List<string> IndividualLoved, List<string> IndividualLiked, List<string> UniversalLoved, List<string> UniversalLiked) GetGiftPreferences(string npcName)
+    {
+        if (GiftTasteCache.TryGetValue(npcName, out var cached))
+            return cached;
+
+        var result = (new List<string>(), new List<string>(), new List<string>(), new List<string>());
+
+        try
+        {
+            var tastes = Game1.NPCGiftTastes;
+            if (tastes is not null && tastes.ContainsKey(npcName))            {
+                // 有序桶：第一个命中某物品的桶决定其口味（个人覆盖通用，讨厌/不喜欢压过喜爱）
+                var buckets = new (List<string> Items, bool Loved, bool Personal)[]
+                {
+                    (ParseGiftIds(GetTasteField(tastes, npcName, 5)), true, true),
+                    (ParseGiftIds(GetTasteField(tastes, npcName, 7)), false, true),
+                    (ParseGiftIds(GetTasteField(tastes, npcName, 9)), false, true),
+                    (ParseGiftIds(GetTasteField(tastes, npcName, 11)), false, true),
+                    (ParseGiftIds(GetTasteField(tastes, "Universal_Love", 5)), true, false),
+                    (ParseGiftIds(GetTasteField(tastes, "Universal_Like", 7)), false, false),
+                    (ParseGiftIds(GetTasteField(tastes, "Universal_Dislike", 9)), false, false),
+                    (ParseGiftIds(GetTasteField(tastes, "Universal_Hate", 11)), false, false),
+                };
+
+                var indLoved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var indLiked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var uniLoved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var uniLiked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach ((List<string> items, bool isLoved, bool isPersonal) in buckets)
+                {
+                    foreach (string id in items)
+                    {
+                        if (!assigned.Add(id)) continue;
+
+                        if (isPersonal)
+                        {
+                            if (isLoved) indLoved.Add(id); else indLiked.Add(id);
+                        }
+                        else
+                        {
+                            if (isLoved) uniLoved.Add(id); else uniLiked.Add(id);
+                        }
+                    }
+                }
+
+                result = (indLoved.ToList(), indLiked.ToList(), uniLoved.ToList(), uniLiked.ToList());
+            }
+        }
+        catch
+        {
+            // 数据异常时只是没有推荐，不影响页面其它功能
+        }
+
+        GiftTasteCache[npcName] = result;
+        return result;
+    }
+
+    /// <summary>取某条目指定下标的口味字段（条目串以 '/' 分隔，越界或缺失返回空串）。</summary>
+    private static string GetTasteField(IDictionary<string, string> tastes, string key, int index)
+    {
+        if (!tastes.TryGetValue(key, out string? raw) || string.IsNullOrWhiteSpace(raw)) return "";
+
+        string[] fields = raw.Split('/');
+        return fields.Length > index ? fields[index] : "";
+    }
+
+    /// <summary>类别 ID → 该类别下的物品 ID（qualified）。首次使用时从 objectData 构建，模组物品自动包含。</summary>
+    private static Dictionary<int, List<string>>? _categoryItems;
+
+    private static List<string> GetCategoryItems(int category)
+    {
+        if (_categoryItems is null)
+        {
+            var map = new Dictionary<int, List<string>>();
+            foreach (var pair in Game1.objectData)
+            {
+                if (pair.Value.Category is int cat)
+                {
+                    if (!map.TryGetValue(cat, out List<string> list))
+                        map[cat] = list = new List<string>();
+                    list.Add("(O)" + pair.Key);
+                }
+            }
+            _categoryItems = map;
+        }
+
+        return _categoryItems.TryGetValue(category, out List<string>? items)
+            ? items
+            : new List<string>();
+    }
+
+    /// <summary>
+    /// 规范化口味字段里的物品 ID：兼容裸数字（"80"）、旧格式（"O 80"）
+    /// 与 1.6 的限定格式（"(O)80"）。
+    /// 负数是类别引用（如 -2 = 所有宝石、-80 = 所有花）：原版通用口味大量使用类别，
+    /// 直接跳过会让「宝石是通用喜欢」这类口味完全消失——这里把类别展开成
+    /// 该类别下的具体物品（按数据顺序，模组加的新物品自动包含），再参与口味判定。
+    /// </summary>
+    private static List<string> ParseGiftIds(string raw)
+    {
+        var ids = new List<string>();
+
+        foreach (string part in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string id = part.Trim();
+            if (id.Length == 0) continue;
+
+            if (id.StartsWith('-') && int.TryParse(id, out int category))
+            {
+                ids.AddRange(GetCategoryItems(-category));
+                continue;
+            }
+
+            if (id.StartsWith("(O)", StringComparison.Ordinal))
+            {
+                ids.Add(id);
+            }
+            else if (id.StartsWith("O ", StringComparison.OrdinalIgnoreCase))
+            {
+                ids.Add("(O)" + id.Substring(2).Trim());
+            }
+            else if (id.All(char.IsDigit))
+            {
+                ids.Add("(O)" + id);
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>把物品 ID 转成预览图标；未知物品（模组未加载等）直接跳过。</summary>
+    private static List<GiftIcon> BuildGiftIcons(List<string> ids)
+    {
+        var icons = new List<GiftIcon>();
+
+        foreach (string id in ids)
+        {
+            if (icons.Count >= MaxGiftIcons) break;
+
+            var data = ItemRegistry.GetData(id);
+            if (data is null) continue;
+
+            icons.Add(new GiftIcon { Sprite = Tuple.Create(data.GetTexture(), data.GetSourceRect()) });
+        }
+
+        return icons;
     }
 
     /// <summary>
@@ -506,8 +776,7 @@ public class FriendshipViewModel : INotifyPropertyChanged
             {
                 Game1.showGlobalMessage(_translations
                     .Get(I18n.Keys.RelaxValley_UI_Friendship_NotMet)
-                    .Tokens(new { name = friend.DisplayName })
-                    .ToString());
+                    .Tokens(new { name = friend.DisplayName }));
                 return;
             }
 
@@ -532,8 +801,7 @@ public class FriendshipViewModel : INotifyPropertyChanged
         {
             Game1.showGlobalMessage(_translations
                 .Get(I18n.Keys.RelaxValley_UI_Friendship_CannotSocialize)
-                .Tokens(new { name = friend.DisplayName })
-                .ToString());
+                .Tokens(new { name = friend.DisplayName }));
             return;
         }
 
@@ -546,8 +814,7 @@ public class FriendshipViewModel : INotifyPropertyChanged
 
         Game1.showGlobalMessage(_translations
             .Get(I18n.Keys.RelaxValley_UI_Friendship_Met)
-            .Tokens(new { name = friend.DisplayName })
-            .ToString());
+            .Tokens(new { name = friend.DisplayName }));
 
         _allFriends.Clear();
         _allFriends.AddRange(BuildFriends());
@@ -567,18 +834,21 @@ public class FriendshipViewModel : INotifyPropertyChanged
 
         string question = _translations
             .Get(I18n.Keys.RelaxValley_UI_Friendship_InteractionTitle)
-            .Tokens(new { name = npc.displayName })
-            .ToString();
+            .Tokens(new { name = npc.displayName });
+
+        // 「传送」是 GMCM 可关的附加功能（默认关闭），关闭时不出现在选项里
+        var responses = new List<Response>
+        {
+            new("Talk", I18n.RelaxValley_UI_Friendship_Talk()),
+            new("Gift", I18n.RelaxValley_UI_Friendship_Gift())
+        };
+        if (_teleportEnabled)
+            responses.Add(new Response("Teleport", I18n.RelaxValley_UI_Friendship_Teleport()));
+        responses.Add(new Response("Cancel", I18n.RelaxValley_UI_Friendship_Cancel()));
 
         location.createQuestionDialogue(
             question,
-            new[]
-            {
-                new Response("Talk", I18n.RelaxValley_UI_Friendship_Talk()),
-                new Response("Gift", I18n.RelaxValley_UI_Friendship_Gift()),
-                new Response("Teleport", I18n.RelaxValley_UI_Friendship_Teleport()),
-                new Response("Cancel", I18n.RelaxValley_UI_Friendship_Cancel())
-            },
+            responses.ToArray(),
             (_, answer) =>
             {
                 switch (answer)
@@ -696,8 +966,8 @@ public class FriendshipViewModel : INotifyPropertyChanged
 
         try
         {
-            var npc = Game1.getCharacterFromName(npcName);
-            if (npc?.Sprite != null)
+            NPC? npc = Game1.getCharacterFromName(npcName);
+            if (npc is not null && npc.Sprite is not null)
             {
                 // 与立绘同理：刷新外观后再读取行走图
                 npc.ChooseAppearance();
@@ -757,8 +1027,12 @@ public class FriendshipViewModel : INotifyPropertyChanged
             _ => filtered.OrderByDescending(f => f.Points)
         };
 
-        // 置顶村民永远排在最前，其余保持所选排序
-        Friends = filtered.OrderByDescending(f => f.IsPinned).ToList();
+        // 置顶村民永远排在最前；生日定位模式下今日生日者紧随其后，其余保持所选排序
+        IOrderedEnumerable<FriendItem> ordered = filtered.OrderByDescending(f => f.IsPinned);
+        if (_birthdayFirst)
+            ordered = ordered.ThenByDescending(f => f.IsBirthday);
+
+        Friends = ordered.ToList();
     }
 
     // ── 一键对话 / 定位今日生日 ─────────────────────────────────
@@ -780,7 +1054,7 @@ public class FriendshipViewModel : INotifyPropertyChanged
             NPC? npc = Game1.getCharacterFromName(friend.NpcName);
             if (npc is null || !npc.CanSocialize) continue;
 
-            if (!Game1.player.friendshipData.TryGetValue(friend.NpcName, out Friendship friendship))
+            if (!Game1.player.friendshipData.TryGetValue(friend.NpcName, out Friendship? friendship))
             {
                 if (friend.IsMet) continue;
 
@@ -799,7 +1073,6 @@ public class FriendshipViewModel : INotifyPropertyChanged
         Game1.showGlobalMessage(count > 0
             ? _translations.Get(I18n.Keys.RelaxValley_UI_Friendship_TalkAllResult)
                 .Tokens(new { count })
-                .ToString()
             : I18n.RelaxValley_UI_Friendship_TalkAllNone());
 
         _allFriends.Clear();
@@ -807,43 +1080,154 @@ public class FriendshipViewModel : INotifyPropertyChanged
         ApplyFilters();
     }
 
-    /// <summary>定位今日生日的村民：只有一位时直接传送，多位时让玩家选。</summary>
+    /// <summary>
+    /// 定位今日生日的村民：把今日生日者浮到列表顶部（紧跟置顶之后）并滚动到顶，
+    /// 再点一次恢复默认排序。不传送、不弹对话框——问题对话框会把当前页面整个顶掉，
+    /// 列表定位必须在页面保持打开的情况下完成。
+    /// </summary>
     public void LocateBirthdayNpc()
     {
-        List<FriendItem> birthdayFriends = _allFriends
-            .Where(f => f.IsBirthday && f.IsMet)
-            .ToList();
+        _birthdayFirst = !_birthdayFirst;
+        ApplyFilters();
 
-        if (birthdayFriends.Count == 0)
+        Game1.playSound(_birthdayFirst ? "bigSelect" : "bigDeSelect");
+        Game1.showGlobalMessage(_birthdayFirst
+            ? I18n.RelaxValley_UI_Friendship_LocateActive()
+            : I18n.RelaxValley_UI_Friendship_LocateRestored());
+    }
+
+    // ── 批量送礼 ────────────────────────────────────────────────
+
+    /// <summary>
+    /// 会改变关系走向的物品，绝不批量赠送：花束（开始约会）、
+    /// 枯萎花束（分手）、人鱼吊坠（求婚）。
+    /// </summary>
+    private static readonly HashSet<string> RelationshipItemIds =
+        new(StringComparer.OrdinalIgnoreCase) { "458", "791", "858" };
+
+    /// <summary>
+    /// 批量送礼：把手持物品按原版送礼规则各送一份给今日未送礼、未超每周上限的村民。
+    /// 资格判定逐条对照 <see cref="NPC.tryToReceiveActiveObject"/> 的原版分支（含 probe 语义）；
+    /// 实际赠送直接走原版方法，好感度 / 礼物口味 / 每日每周计数 / 物品扣除全部由游戏本体处理，
+    /// 只把逐个弹出的反应对话静默关掉。
+    /// </summary>
+    public void BatchGift()
+    {
+        StardewValley.Object? held = Game1.player.ActiveObject;
+        if (held is null)
+        {
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Friendship_GiftNeedsItem());
+            return;
+        }
+
+        if (RelationshipItemIds.Contains(held.ItemId))
+        {
+            Game1.showGlobalMessage(_translations
+                .Get(I18n.Keys.RelaxValley_UI_Friendship_BatchGiftForbidden)
+                .Tokens(new { item = held.DisplayName }));
+            return;
+        }
+
+        var targets = new List<NPC>();
+        foreach (string npcName in Game1.player.friendshipData.Keys)
+        {
+            NPC? npc = Game1.getCharacterFromName(npcName);
+            if (npc is null || npc.IsInvisible) continue;
+            if (!CanBatchGift(npc, held)) continue;
+            targets.Add(npc);
+        }
+
+        if (targets.Count == 0)
         {
             Game1.playSound("cancel");
-            Game1.showGlobalMessage(I18n.RelaxValley_UI_Friendship_NoBirthday());
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Friendship_BatchGiftNone());
             return;
         }
 
-        if (birthdayFriends.Count == 1)
-        {
-            birthdayFriends[0].Teleport();
-            return;
-        }
-
+        int count = Math.Min(targets.Count, held.Stack);
         var location = Game1.currentLocation;
         if (location is null) return;
 
+        string question = _translations
+            .Get(I18n.Keys.RelaxValley_UI_Friendship_BatchGiftConfirm)
+            .Tokens(new { item = held.DisplayName, count });
+
         location.createQuestionDialogue(
-            I18n.RelaxValley_UI_Friendship_BirthdayChoose(),
-            birthdayFriends
-                .Select(f => new Response(f.NpcName, f.DisplayName))
-                .Append(new Response("Cancel", I18n.RelaxValley_UI_Friendship_Cancel()))
-                .ToArray(),
+            question,
+            new[]
+            {
+                new Response("Confirm", I18n.RelaxValley_UI_Friendship_BatchGiftConfirmOk()),
+                new Response("Cancel", I18n.RelaxValley_UI_Friendship_Cancel())
+            },
             (_, answer) =>
             {
-                FriendItem? target = birthdayFriends
-                    .FirstOrDefault(f => string.Equals(f.NpcName, answer, StringComparison.OrdinalIgnoreCase));
-                if (target is null) return;
-
-                ModEntry.RunWhenPlayerFree(target.Teleport);
+                if (answer != "Confirm") return;
+                ModEntry.RunWhenPlayerFree(() => ExecuteBatchGift(targets));
             });
+    }
+
+    /// <summary>按原版 tryToReceiveActiveObject 的礼品分支逐条判断资格（无副作用）。</summary>
+    private static bool CanBatchGift(NPC npc, Item held)
+    {
+        if (!npc.CanReceiveGifts()) return false;
+        if (!held.canBeGivenAsGift()) return false;
+        if (ItemContextTagManager.HasBaseTag(held.QualifiedItemId, "not_giftable")) return false;
+
+        if (!Game1.player.friendshipData.TryGetValue(npc.Name, out Friendship? friendship)) return false;
+        if (friendship.IsDivorced()) return false;
+        if (friendship.GiftsToday >= 1) return false;
+
+        // 每周 2 次上限；配偶 / 孩子 / 生日当天不受限（与原版一致）
+        bool weeklyOk = friendship.GiftsThisWeek < 2
+            || Game1.player.spouse == npc.Name
+            || npc is StardewValley.Characters.Child
+            || npc.isBirthday();
+        if (!weeklyOk) return false;
+
+        if (Game1.IsGreenRainingHere() && Game1.year == 1 && !npc.isMarried()) return false;
+
+        // 被甩状态拒收（原版：activeDialogueEvents 含 dumped 且有对应对话）
+        foreach (string key in Game1.player.activeDialogueEvents.Keys)
+        {
+            if (key.Contains("dumped", StringComparison.Ordinal) && npc.Dialogue.ContainsKey(key))
+                return false;
+        }
+
+        return true;
+    }
+
+    private void ExecuteBatchGift(List<NPC> targets)
+    {
+        var player = Game1.player;
+        string itemName = player.ActiveObject?.DisplayName ?? "?";
+        int gifted = 0;
+
+        foreach (NPC npc in targets)
+        {
+            if (player.ActiveObject is null) break;   // 原版把背包扣完自然停止
+
+            if (!player.friendshipData.TryGetValue(npc.Name, out Friendship? friendship)) continue;
+            if (!CanBatchGift(npc, player.ActiveObject)) continue;
+            int before = friendship.GiftsToday;
+
+            npc.tryToReceiveActiveObject(player);
+
+            // 反应对话立即静默关掉：好感度、口味判定、物品扣除已由原版入账
+            if (Game1.activeClickableMenu is DialogueBox box)
+                box.exitThisMenu(false);
+
+            if (player.friendshipData.TryGetValue(npc.Name, out Friendship? after) && after.GiftsToday > before)
+                gifted++;
+        }
+
+        Game1.playSound(gifted > 0 ? "give_gift" : "cancel");
+        Game1.showGlobalMessage(_translations
+            .Get(I18n.Keys.RelaxValley_UI_Friendship_BatchGiftDone)
+            .Tokens(new { count = gifted, item = itemName }));
+
+        _allFriends.Clear();
+        _allFriends.AddRange(BuildFriends());
+        ApplyFilters();
     }
 
     // ── INPC ────────────────────────────────────────────────────
@@ -935,5 +1319,5 @@ public class FriendItem
     }
 
     private static string Format(string key, object tokens) =>
-        ModEntry.Instance.Helper.Translation.Get(key).Tokens(tokens).ToString();
+        ModEntry.Instance.Helper.Translation.Get(key).Tokens(tokens);
 }

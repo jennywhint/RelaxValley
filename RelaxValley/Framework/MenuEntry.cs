@@ -51,6 +51,12 @@ public sealed class MenuEntry
     /// <summary>执行动作。通过 entry.Argument 可获取商店ID等参数。</summary>
     public Action<MenuEntry>? Execute { get; }
 
+    /// <summary>
+    /// 右键动作。用于“左键原版内容 / 右键更详细的模组页面”模式
+    /// （例如完美度追踪：左键原版 ShowQiCat，右键打开完美手册）。
+    /// </summary>
+    public Action<MenuEntry>? RightExecute { get; }
+
     public Func<bool>? Condition { get; }
 
     /// <summary>
@@ -106,13 +112,15 @@ public sealed class MenuEntry
         Func<bool>? available = null,
         Func<string>? lockReason = null,
         Func<MenuEntryStatus>? status = null,
-        string? categoryDisplayName = null)
+        string? categoryDisplayName = null,
+        Action<MenuEntry>? rightExecute = null)
     {
         if (string.IsNullOrWhiteSpace(id))
             throw new ArgumentException("id 不能为空", nameof(id));
 
         Id = id;
         Execute = execute;
+        RightExecute = rightExecute;
         Category = category ?? "Misc";
         CategoryDisplayName = categoryDisplayName;
         TranslationKey = translationKey ?? $"RelaxValley.Menu.{id}.Name";
@@ -125,7 +133,7 @@ public sealed class MenuEntry
         StatusProvider = status;
     }
 
-    public string GetLockReason() => LockReason?.Invoke() ?? "当前未开放。";
+    public string GetLockReason() => LockReason?.Invoke() ?? I18n.RelaxValley_UI_Common_Locked();
 
     public bool TryExecute(IMonitor monitor)
     {

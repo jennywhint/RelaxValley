@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Linq;
 
 namespace RelaxValley.Framework.UI;
@@ -10,8 +9,11 @@ public sealed class DetailLine
     public string Text { get; init; } = "";
 }
 
-/// <summary>金核桃收集信息的 StardewUI 视图模型。</summary>
-public sealed class GoldenWalnutsViewModel : INotifyPropertyChanged
+/// <summary>
+/// 通用「收集进度」小页的视图模型（金核桃信息 / 博物馆收藏共用）。
+/// 纯展示，一次性绑定。
+/// </summary>
+public sealed class GoldenWalnutsViewModel
 {
     public GoldenWalnutsViewModel(
         string title,
@@ -37,6 +39,4 @@ public sealed class GoldenWalnutsViewModel : INotifyPropertyChanged
     public List<DetailLine> Details { get; }
 
     public string Hint { get; }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
 }

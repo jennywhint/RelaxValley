@@ -5,7 +5,7 @@
        padding="32,24">
   <lane orientation="vertical">
 
-    <label font="dialogue" text={Title} margin="0,0,0,16" />
+    <label font="dialogue" text={:Title} margin="0,0,0,16" />
 
     <scrollable>
       <grid item-layout="length: 280" item-spacing="12,12">

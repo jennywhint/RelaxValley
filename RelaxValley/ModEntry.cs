@@ -28,6 +28,9 @@ public class ModEntry : Mod
     /// <summary>把动作排到玩家空闲后的下一帧执行。</summary>
     internal static void RunWhenPlayerFree(Action action) => PendingActions.Enqueue(action);
 
+    /// <summary>公开 API：其它模组可通过 ModRegistry.GetApi&lt;IRelaxValleyApi&gt; 获取并注册菜单条目。</summary>
+    public override object? GetApi() => new RelaxValleyApi(_menuRegistry);
+
     public override void Entry(IModHelper helper)
     {
         Instance = this;
@@ -61,6 +64,29 @@ public class ModEntry : Mod
                 }
             }
             Monitor.Log($"[CasinoDebug] Game1.player.clubCoins = {Game1.player.clubCoins}", LogLevel.Info);
+        });
+
+        // 供 config.json 的 MenuShortcutKeys 使用：列出所有可绑定快捷键的条目 Id
+        helper.ConsoleCommands.Add(
+            "rv_list_entries",
+            "列出所有菜单条目 Id 与分类，供 config.json 的 MenuShortcutKeys 使用",
+            (cmd, args) =>
+            {
+                if (!Context.IsWorldReady)
+                {
+                    Monitor.Log("请先进入存档再执行该命令。", LogLevel.Warn);
+                    return;
+                }
+
+                foreach ((string id, string category) in _menuRegistry.GetAllEntrySummaries())
+                    Monitor.Log($"{id} [{category}]", LogLevel.Info);
+            });
+
+        // 供诊断 F1 桥接（Lookup Anything 兼容）是否可用；发布前随其它 debug 命令一并删除
+        helper.ConsoleCommands.Add("rv_f1diag", "诊断 StardewUI 的 F1 桥接状态", (cmd, args) =>
+        {
+            bool registered = StardewUIF1Bridge.EnsureRegistered();
+            Monitor.Log($"F1 桥接诊断:\n{StardewUIF1Bridge.GetDiagnosis()}\n注册结果: {registered}", LogLevel.Info);
         });
 
         // 供 mod 商店 JSON 使用：列出 Data/Shops 的所有商店 ID 与拥有者条件
@@ -121,6 +147,10 @@ public class ModEntry : Mod
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
     {
+        // 配置与工具图标不依赖 StardewUI，先注册，保证界面 API 异常时仍可改设置
+        RegisterToolbarIcon();
+        RegisterGenericModConfigMenu();
+
         // 赋值给静态字段，MenuRegistry 读的就是这个
         ViewEngine = Helper.ModRegistry.GetApi<IViewEngine>("focustense.StardewUI");
         if (ViewEngine is null)
@@ -133,9 +163,6 @@ public class ModEntry : Mod
         ViewEngine.EnableHotReloading();
 
         Monitor.Log("StardewUI API 已就绪。", LogLevel.Info);
-
-        RegisterToolbarIcon();
-        RegisterGenericModConfigMenu();
     }
 
     /// <summary>Iconic Framework 兼容：注册一个打开本模组主菜单的工具图标（等效按主菜单键）。</summary>
@@ -146,8 +173,8 @@ public class ModEntry : Mod
 
         api.AddToolbarIcon(
             ModManifest.UniqueID,
-            "LooseSprites/emojis",
-            new Rectangle(27, 54, 9, 9),
+            "Maps/springobjects",
+            new Rectangle(16, 48, 16, 16),   // 金核桃（(O)73），与完美手册的聊天表情区分开
             () => I18n.RelaxValley_UI_Iconic_Title(),
             () => I18n.RelaxValley_UI_Iconic_Desc(),
             () =>
@@ -159,7 +186,7 @@ public class ModEntry : Mod
         Monitor.Log("已向 Iconic Framework 注册工具图标。", LogLevel.Info);
     }
 
-    /// <summary>可选集成：装了 GMCM 时注册配置项，用于配置完美度外接页面。</summary>
+    /// <summary>可选集成：装了 GMCM 时注册配置项。</summary>
     private void RegisterGenericModConfigMenu()
     {
         var api = Helper.ModRegistry.GetApi<IGenericModConfigMenuApi>(
@@ -176,43 +203,64 @@ public class ModEntry : Mod
             ModManifest,
             getValue: () => Config.OpenMenuKey,
             setValue: value => Config.OpenMenuKey = value,
-            name: () => "打开主菜单",
-            tooltip: () => "按下此键打开 Relax Valley 主菜单（默认 F3，可改为任意键）。");
+            name: () => I18n.RelaxValley_Config_OpenMenu_Name(),
+            tooltip: () => I18n.RelaxValley_Config_OpenMenu_Tooltip());
 
         api.AddBoolOption(
             ModManifest,
             getValue: () => Config.ShopProgressMode,
             setValue: value => Config.ShopProgressMode = value,
-            name: () => "商店进度模式",
-            tooltip: () => "开启：需要先在游戏里打开过一次商店才能远程购买。\n关闭：常开模式，所有已安装商店始终可交互（营业时间等条件仍然生效）。");
+            name: () => I18n.RelaxValley_Config_ShopProgress_Name(),
+            tooltip: () => I18n.RelaxValley_Config_ShopProgress_Tooltip());
 
         api.AddBoolOption(
             ModManifest,
             getValue: () => Config.FriendshipProgressMode,
             setValue: value => Config.FriendshipProgressMode = value,
-            name: () => "村民友谊进度模式",
-            tooltip: () => "开启：未认识的村民不可互动。\n关闭：常开模式，一键对话会结识新村民，点击卡片可直接认识并获得好感度。");
+            name: () => I18n.RelaxValley_Config_FriendshipProgress_Name(),
+            tooltip: () => I18n.RelaxValley_Config_FriendshipProgress_Tooltip());
 
         api.AddBoolOption(
             ModManifest,
             getValue: () => Config.ElevatorProgressMode,
             setValue: value => Config.ElevatorProgressMode = value,
-            name: () => "远程电梯进度模式",
-            tooltip: () => "开启：电梯按当前最深层数解锁。\n关闭：常开模式，矿井全部楼层与骷髅矿洞常规楼层直接可用。");
+            name: () => I18n.RelaxValley_Config_ElevatorProgress_Name(),
+            tooltip: () => I18n.RelaxValley_Config_ElevatorProgress_Tooltip());
+
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.EnableTalkAll,
+            setValue: value => Config.EnableTalkAll = value,
+            name: () => I18n.RelaxValley_Config_TalkAll_Name(),
+            tooltip: () => I18n.RelaxValley_Config_TalkAll_Tooltip());
+
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.EnableFriendshipTeleport,
+            setValue: value => Config.EnableFriendshipTeleport = value,
+            name: () => I18n.RelaxValley_Config_FriendshipTeleport_Name(),
+            tooltip: () => I18n.RelaxValley_Config_FriendshipTeleport_Tooltip());
+
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.EnableBatchGift,
+            setValue: value => Config.EnableBatchGift = value,
+            name: () => I18n.RelaxValley_Config_BatchGift_Name(),
+            tooltip: () => I18n.RelaxValley_Config_BatchGift_Tooltip());
+
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.RespectVanillaGates,
+            setValue: value => Config.RespectVanillaGates = value,
+            name: () => I18n.RelaxValley_Config_VanillaGates_Name(),
+            tooltip: () => I18n.RelaxValley_Config_VanillaGates_Tooltip());
 
         api.AddTextOption(
             ModManifest,
-            getValue: () => string.Join(", ", Config.PerfectionItems),
-            setValue: value => Config.PerfectionItems = SplitOption(value),
-            name: () => "手册物品名（逗号分隔）",
-            tooltip: () => "右键「完美度追踪」时，会先尝试使用背包里这些名字的物品（例如 Perfect Handbook / 完美手册）。");
-
-        api.AddTextOption(
-            ModManifest,
-            getValue: () => string.Join("; ", Config.PerfectionMenuTypes),
-            setValue: value => Config.PerfectionMenuTypes = SplitOption(value, ';'),
-            name: () => "菜单类型全名（分号分隔）",
-            tooltip: () => "没有物品可用时，尝试实例化这些类型并作为菜单打开。格式：命名空间.类型名, 程序集名");
+            getValue: () => string.Join("; ", Config.StatsMenuTypes),
+            setValue: value => Config.StatsMenuTypes = SplitOption(value, ';'),
+            name: () => I18n.RelaxValley_Config_StatsMenuTypes_Name(),
+            tooltip: () => I18n.RelaxValley_Config_StatsMenuTypes_Tooltip());
 
         Monitor.Log("已注册 GMCM 配置项。", LogLevel.Info);
     }
@@ -259,8 +307,14 @@ public class ModEntry : Mod
     {
         if (!Context.IsWorldReady) return;
 
+        // 搜索框等文本输入控件正在接收输入时，不拦截按键
+        if (Game1.keyboardDispatcher.Subscriber is not null) return;
+
         if (e.Button == Config.OpenMenuKey)
         {
+            // 没有菜单时，过场 / 对话等非自由状态不打开，避免打断剧情
+            if (Game1.activeClickableMenu is null && !Context.IsPlayerFree) return;
+
             if (Game1.activeClickableMenu is not null)
                 Game1.exitActiveMenu();
 

@@ -1,4 +1,5 @@
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using StardewValley;
 using StardewValley.Menus;
 
@@ -15,26 +16,38 @@ public sealed class TeleportMapPage : MapPage
     {
     }
 
+    /// <summary>独立打开时没有 GameMenu 转发悬停事件，自己刷新一次提示文本。</summary>
+    public override void draw(SpriteBatch b)
+    {
+        performHoverAction(Game1.getMouseX(), Game1.getMouseY());
+        base.draw(b);
+    }
+
     public override void receiveLeftClick(int x, int y, bool playSound = true)
     {
-        foreach (var pair in points)
+        foreach (ClickableComponent c in points.Values)
         {
-            if (!pair.Value.bounds.Contains(x, y)) continue;
+            if (!c.bounds.Contains(x, y)) continue;
 
-            // NamespacedId 形如 "Town/Default"，前缀是地图区域 ID
-            string areaId = pair.Key.Split('/')[0];
+            // 点击点换算为地图像素坐标（×4，原点为地图左上角），用于精确匹配世界位置
+            var mapPoint = new Point(x - mapBounds.X, y - mapBounds.Y);
 
-            if (MapTeleport.TryGetWarpTarget(areaId, out string location, out Point tile))
+            if (MapTeleport.TryGetWarpTargetAt(c.name, mapPoint, out string location, out Point tile))
             {
                 exitThisMenu(false);
                 MapTeleport.WarpTo(location, tile);
                 return;
             }
 
-            // 未解锁或不可传送的区域：保持原版行为
-            break;
+            // 与原版一致的音效彩蛋（贝簋石 / 下水道）
+            if (c.name == "Beach/LonelyStone") Game1.playSound("stoneCrack");
+            else if (c.name == "Forest/SewerPipe") Game1.playSound("shadowpeep");
+            return;
         }
 
-        base.receiveLeftClick(x, y, playSound);
+        if (Game1.activeClickableMenu is GameMenu gameMenu)
+        {
+            gameMenu.changeTab(gameMenu.lastOpenedNonMapTab);
+        }
     }
 }

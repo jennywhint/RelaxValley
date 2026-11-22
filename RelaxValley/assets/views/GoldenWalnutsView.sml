@@ -22,7 +22,7 @@
       </lane>
     </lane>
 
-    <lane orientation="horizontal" layout="stretch stretch" vertical-content-alignment="bottom"
+    <lane orientation="horizontal" layout="stretch stretch" vertical-content-alignment="End"
           horizontal-content-alignment="middle">
       <label font="small" text={:Hint} color="#8A8580" />
     </lane>

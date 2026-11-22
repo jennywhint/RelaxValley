@@ -103,8 +103,7 @@ public class QuestBoardViewModel : INotifyPropertyChanged
 
     public string CountText => _translations
         .Get(I18n.Keys.RelaxValley_UI_QuestBoard_Count)
-        .Tokens(new { count = _quests.Count })
-        .ToString();
+        .Tokens(new { count = _quests.Count });
 
     private string _searchText = "";
     public string SearchText
@@ -177,7 +176,7 @@ public class QuestBoardViewModel : INotifyPropertyChanged
     {
         var result = new List<QuestItem>();
 
-        Dictionary<string, string>? questData;
+        Dictionary<string, string> questData;
         try
         {
             questData = Game1.content.Load<Dictionary<string, string>>("Data/Quests");
@@ -234,11 +233,6 @@ public class QuestBoardViewModel : INotifyPropertyChanged
             string sourceValue = GetSourceValue(pair.Key);
             string statusText = GetStatusText(pair.Key, out string statusColor, out string statusValue);
 
-            bool canAccept = quest is not null
-                             && statusValue == "NotAccepted"
-                             && !quest.isSecretQuest()
-                             && Game1.player?.hasQuest(pair.Key) != true;
-
             result.Add(new QuestItem
             {
                 Id = pair.Key,
@@ -252,9 +246,7 @@ public class QuestBoardViewModel : INotifyPropertyChanged
                 RewardText = quest is not null ? BuildRewardText(quest) : "",
                 StatusText = statusText,
                 StatusColor = statusColor,
-                StatusValue = statusValue,
-                CanAccept = canAccept,
-                AcceptText = I18n.RelaxValley_UI_QuestBoard_Accept()
+                StatusValue = statusValue
             });
         }
 
@@ -382,8 +374,7 @@ public class QuestBoardViewModel : INotifyPropertyChanged
         {
             return _translations
                 .Get(I18n.Keys.RelaxValley_UI_QuestBoard_RewardMoney)
-                .Tokens(new { money })
-                .ToString();
+                .Tokens(new { money });
         }
 
         string description = ParseText(quest.rewardDescription.Value);
@@ -403,52 +394,7 @@ public class QuestBoardViewModel : INotifyPropertyChanged
         }
     }
 
-    // ── 接取 ────────────────────────────────────────────────────
-
-    /// <summary>
-    /// 接取任务：走原版 Farmer.addQuest（重复检查、任务日志、HUD 提示都由游戏处理）。
-    /// </summary>
-    public void AcceptQuest(string questId)
-    {
-        if (string.IsNullOrWhiteSpace(questId)) return;
-
-        if (Game1.player.hasQuest(questId))
-        {
-            Game1.playSound("cancel");
-            Game1.showGlobalMessage(I18n.RelaxValley_UI_QuestBoard_AcceptAlready());
-            return;
-        }
-
-        Quest? quest;
-        try
-        {
-            quest = Quest.getQuestFromId(questId);
-        }
-        catch (Exception ex)
-        {
-            ModEntry.Instance.Monitor.Log($"接取任务 {questId} 失败：{ex.Message}", LogLevel.Warn);
-            quest = null;
-        }
-
-        if (quest is null || quest.isSecretQuest())
-        {
-            Game1.playSound("cancel");
-            Game1.showGlobalMessage(I18n.RelaxValley_UI_QuestBoard_AcceptFailed());
-            return;
-        }
-
-        Game1.player.addQuest(questId);
-        Game1.playSound("newArtifact");
-
-        Game1.showGlobalMessage(_translations
-            .Get(I18n.Keys.RelaxValley_UI_QuestBoard_AcceptDone)
-            .Tokens(new { name = ParseText(quest.questTitle) })
-            .ToString());
-
-        RefreshQuests();
-    }
-
-    /// <summary>重建任务列表与接取状态。</summary>
+    /// <summary>重建任务列表（纯只读浏览，不提供接取——接取请到游戏内的对应 NPC / 布告栏）。</summary>
     private void RefreshQuests()
     {
         _allQuests.Clear();
@@ -512,9 +458,4 @@ public class QuestItem
 
     /// <summary>NotAccepted / Accepted / Completed，用于状态筛选。</summary>
     public string StatusValue { get; set; } = "NotAccepted";
-
-    /// <summary>当前是否可以接取（未接取 + 不是秘密任务 + 原版能解析）。</summary>
-    public bool CanAccept { get; set; }
-
-    public string AcceptText { get; set; } = "";
 }

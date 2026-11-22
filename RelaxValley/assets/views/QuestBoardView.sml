@@ -48,18 +48,10 @@
             <lane orientation="horizontal" margin="0,6,0,0">
               <label font="small" text={:SourceLabel} color="#7A5230" />
               <label font="small" text={:TypeLabel} color="#7A5230" margin="12,0,0,0" />
-              <label font="small" text={:StatusText} color={:StatusColor} margin="12,0,0,0" />
             </lane>
+            <label font="small" text={:StatusText} color={:StatusColor} margin="0,4,0,0" />
             <label font="small" text={:Objective} margin="0,6,0,0" />
             <label font="small" text={:RewardText} color="#2E7D32" margin="0,4,0,0" />
-            <lane *if={:CanAccept} orientation="horizontal" margin="0,8,0,0">
-              <frame layout="content content"
-                     background={@Mods/StardewUI/Sprites/ControlBorder}
-                     padding="12,4"
-                     left-click=|^AcceptQuest(Id)|>
-                <label font="small" text={:AcceptText} />
-              </frame>
-            </lane>
           </lane>
         </frame>
       </grid>

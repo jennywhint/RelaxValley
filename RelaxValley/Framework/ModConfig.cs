@@ -1,4 +1,4 @@
-using Microsoft.Xna.Framework.Input;
+using StardewModdingAPI;
 using System.Collections.Generic;
 
 namespace RelaxValley.Framework;
@@ -30,24 +30,36 @@ public sealed class ModConfig
     public bool FriendshipProgressMode { get; set; } = true;
 
     /// <summary>
+    /// 村民友谊页的「一键对话」按钮。默认关闭，避免误触一次性消耗全部交谈机会。
+    /// </summary>
+    public bool EnableTalkAll { get; set; } = false;
+
+    /// <summary>
+    /// 村民友谊页左键卡片互动菜单里的「传送」选项。默认关闭，保持页面为纯信息用途。
+    /// </summary>
+    public bool EnableFriendshipTeleport { get; set; } = false;
+
+    /// <summary>
+    /// 批量送礼按钮。开启后，友谊页可把手持物品按原版送礼规则各送一份给今日未送礼的村民。
+    /// 会消耗每日/每周送礼机会，默认关闭。
+    /// </summary>
+    public bool EnableBatchGift { get; set; } = false;
+
+    /// <summary>
+    /// 原版门禁。开启 = 赌场统计需要锈钥匙、核桃房订单需要核桃房开启（与原版进入条件一致）；
+    /// 关闭 = 这两项始终可用。默认开启。
+    /// </summary>
+    public bool RespectVanillaGates { get; set; } = true;
+
+    /// <summary>
     /// 远程电梯进度模式。开启 = 电梯按玩家当前最深层数解锁；
     /// 关闭 = 常开模式，矿井全部楼层与骷髅矿洞常规楼层直接可用。
     /// </summary>
     public bool ElevatorProgressMode { get; set; } = true;
 
     /// <summary>
-    /// 右键「完美度追踪」时要尝试使用的物品名（中英文均可，逗号分隔）。
-    /// 例如完美手册的物品名；找到后会像使用该物品一样打开它的界面。
-    /// </summary>
-    public List<string> PerfectionItems { get; set; } = new()
-    {
-        "Perfect Handbook",
-        "完美手册"
-    };
-
-    /// <summary>
-    /// 右键「完美度追踪」时要尝试实例化的菜单类型全名
+    /// 右键「农场动物」时尝试实例化的菜单类型全名
     /// （格式：命名空间.类型名, 程序集名）。留空表示不使用。
     /// </summary>
-    public List<string> PerfectionMenuTypes { get; set; } = new();
+    public List<string> StatsMenuTypes { get; set; } = new();
 }

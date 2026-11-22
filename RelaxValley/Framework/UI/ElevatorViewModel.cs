@@ -1,7 +1,6 @@
 using StardewValley;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 
 namespace RelaxValley.Framework.UI;
 
@@ -12,8 +11,8 @@ public sealed class ElevatorLevel
     public string Text { get; init; } = "";
 }
 
-/// <summary>通用电梯（矿井 / 骷髅矿洞）的 StardewUI 视图模型。</summary>
-public sealed class ElevatorViewModel : INotifyPropertyChanged, ICloseAware
+/// <summary>通用电梯（矿井 / 骷髅矿洞）的 StardewUI 视图模型（纯展示，一次性绑定）。</summary>
+public sealed class ElevatorViewModel : ICloseAware
 {
     private readonly Action<int> _onSelect;
     private Action? _closeSelf;
@@ -53,6 +52,4 @@ public sealed class ElevatorViewModel : INotifyPropertyChanged, ICloseAware
         _closeSelf?.Invoke();
         _onSelect(level);
     }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
 }

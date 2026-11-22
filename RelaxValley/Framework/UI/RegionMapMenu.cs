@@ -124,6 +124,12 @@ public sealed class RegionMapMenu : IClickableMenu
             new Vector2((Game1.uiViewport.Width - hintSize.X) / 2f, hintY),
             Game1.textColor * 0.8f);
 
+        // 悬浮提示（与原版世界地图同款样式）：显示「xxx的家 / xxx商店」等区域 tooltip
+        if (!string.IsNullOrWhiteSpace(_hoverText))
+        {
+            IClickableMenu.drawHoverText(b, _hoverText, Game1.smallFont);
+        }
+
         base.draw(b);
         drawMouse(b);
     }
@@ -179,7 +185,10 @@ public sealed class RegionMapMenu : IClickableMenu
         {
             if (!bounds.Contains(x, y)) continue;
 
-            if (MapTeleport.TryGetWarpTarget(areaId, out string location, out Point tile))
+            // 点击点换算为地图像素坐标（×4，原点为地图左上角），用于精确匹配世界位置
+            var mapPoint = new Point(x - _mapBounds.X, y - _mapBounds.Y);
+
+            if (MapTeleport.TryGetWarpTargetAt(areaId, mapPoint, out string location, out Point tile))
             {
                 exitThisMenu(false);
                 MapTeleport.WarpTo(location, tile);

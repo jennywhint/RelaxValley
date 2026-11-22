@@ -1,15 +1,14 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
+﻿using System.Collections.Generic;
 using System.Linq;
 using StardewValley;
 using StardewValley.TokenizableStrings;
 
 namespace RelaxValley.Framework.UI;
 
-public class MonsterKillViewModel : INotifyPropertyChanged
+/// <summary>纯展示模型，全部一次性绑定，无需 INPC。</summary>
+public class MonsterKillViewModel
 {
-    public string Title => "杀怪统计";
+    public string Title => I18n.RelaxValley_Menu_MonsterKill_Name();
 
     public List<GoalItem> Goals { get; }
 
@@ -58,8 +57,6 @@ public class MonsterKillViewModel : INotifyPropertyChanged
 
         return field?.GetValue(Game1.player.stats) as Dictionary<string, int>;
     }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
 }
 
 public class GoalItem

@@ -6,7 +6,6 @@ using StardewValley.Locations;
 using StardewValley.Objects;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Linq;
 
 namespace RelaxValley.Framework.UI;
@@ -23,8 +22,9 @@ public sealed class FlowerTile
 
 /// <summary>
 /// 统一花色：扫描背包与所有存储容器里的花，选一种作为目标后全部转换。
+/// 纯展示模型（一次性绑定），仅承载关闭回调。
 /// </summary>
-public sealed class FlowerUnifyViewModel : INotifyPropertyChanged, ICloseAware
+public sealed class FlowerUnifyViewModel : ICloseAware
 {
     private readonly ITranslationHelper _translation;
     private readonly IMonitor _monitor;
@@ -199,15 +199,13 @@ public sealed class FlowerUnifyViewModel : INotifyPropertyChanged, ICloseAware
             ? _translation
                 .Get(I18n.Keys.RelaxValley_UI_FlowerUnify_Done)
                 .Tokens(new { count = converted, name = target.Name })
-                .ToString()
             : I18n.RelaxValley_UI_FlowerUnify_None();
 
         if (_skippedContainers > 0)
         {
             message += "\n" + _translation
                 .Get(I18n.Keys.RelaxValley_UI_FlowerUnify_Skipped)
-                .Tokens(new { count = _skippedContainers })
-                .ToString();
+                .Tokens(new { count = _skippedContainers });
         }
 
         Game1.showGlobalMessage(message);
@@ -263,6 +261,4 @@ public sealed class FlowerUnifyViewModel : INotifyPropertyChanged, ICloseAware
 
         return converted;
     }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
 }

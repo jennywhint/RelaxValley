@@ -19,8 +19,8 @@
           margin="0,0,0,10">
       <frame layout="content content"
              background={@Mods/StardewUI/Sprites/ControlBorder}
-             padding="18,8"
-             left-click=|^GoBack()|>
+             padding="18,11"
+             left-click=|GoBack()|>
         <label font="dialogue" text={:BackText} color="#7A4A20" />
       </frame>
     </lane>
@@ -41,7 +41,7 @@
             <frame *repeat={:Entries}
                    layout="stretch content"
                    background={@Mods/StardewUI/Sprites/ControlBorder}
-                   padding="14,8"
+                   padding="14,13"
                    opacity={:Opacity}
                    left-click=|Click()|
                    right-click=|RightClick()|>

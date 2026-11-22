@@ -1,4 +1,3 @@
-using Microsoft.Xna.Framework.Input;
 using StardewModdingAPI;
 using System;
 

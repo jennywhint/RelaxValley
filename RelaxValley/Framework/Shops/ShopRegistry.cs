@@ -359,7 +359,7 @@ public sealed class ShopRegistry
     /// <summary>取商店 NamedNpc 拥有者的本地化名字。</summary>
     private string? GetNamedOwnerDisplayName(string shopId)
     {
-        if (!GetShopData().TryGetValue(shopId, out ShopData data) || data.Owners is null)
+        if (!GetShopData().TryGetValue(shopId, out ShopData? data) || data.Owners is null)
             return null;
 
         foreach (ShopOwnerData owner in data.Owners)
@@ -802,7 +802,7 @@ public sealed class ShopRegistry
     /// </summary>
     private string? GetFirstNamedOwner(string shopId)
     {
-        if (!GetShopData().TryGetValue(shopId, out ShopData data) || data.Owners is null)
+        if (!GetShopData().TryGetValue(shopId, out ShopData? data) || data.Owners is null)
             return null;
 
         foreach (ShopOwnerData owner in data.Owners)
@@ -895,7 +895,7 @@ public sealed class ShopRegistry
 
     private bool IsShopDataAvailable(string shopId)
     {
-        if (!GetShopData().TryGetValue(shopId, out ShopData data)) return false;
+        if (!GetShopData().TryGetValue(shopId, out ShopData? data)) return false;
         if (data.Owners is null || data.Owners.Count == 0) return true;
 
         foreach (ShopOwnerData owner in data.Owners)
@@ -915,7 +915,7 @@ public sealed class ShopRegistry
         if (ModEntry.Config.ShopProgressMode && !ShopDiscovery.IsVisited(shopId))
             return I18n.RelaxValley_UI_Workbench_NotDiscovered();
 
-        if (!GetShopData().TryGetValue(shopId, out ShopData data))
+        if (!GetShopData().TryGetValue(shopId, out ShopData? data))
             return fallback ?? I18n.RelaxValley_UI_Workbench_MissingShop();
 
         if (!IsShopTimeAvailable(shopId) || !IsShopDataAvailable(shopId))
