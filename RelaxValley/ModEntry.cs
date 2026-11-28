@@ -19,6 +19,9 @@ public class ModEntry : Mod
 
     private MenuRegistry _menuRegistry = null!;
 
+    /// <summary>菜单注册表访问器：供各页面模型打开其它菜单（如钓鱼情报的「所有的鱼」）。</summary>
+    internal MenuRegistry Menus => _menuRegistry;
+
     /// <summary>
     /// 需要等玩家空闲（没有菜单、对话、动画）后再执行的动作。
     /// 从菜单/问题对话框的回调里不能立刻打开新对话，否则会被旧菜单的收尾流程关掉。
@@ -27,6 +30,27 @@ public class ModEntry : Mod
 
     /// <summary>把动作排到玩家空闲后的下一帧执行。</summary>
     internal static void RunWhenPlayerFree(Action action) => PendingActions.Enqueue(action);
+
+    /// <summary>
+    /// 当前打开的任务一览页模型；打开期间由 UpdateTicked 驱动轮询，
+    /// 让「已接取」任务的进度文本实时刷新。关闭菜单时由 MenuChanged 注销。
+    /// </summary>
+    internal static QuestBoardViewModel? LiveQuestBoard { get; private set; }
+
+    private static IClickableMenu? _liveQuestBoardMenu;
+
+    /// <summary>任务一览页打开时注册轮询（MenuRegistry 调用）。</summary>
+    internal static void SetLiveQuestBoard(QuestBoardViewModel model, IClickableMenu menu)
+    {
+        LiveQuestBoard = model;
+        _liveQuestBoardMenu = menu;
+    }
+
+    private static void ClearLiveQuestBoard()
+    {
+        LiveQuestBoard = null;
+        _liveQuestBoardMenu = null;
+    }
 
     /// <summary>公开 API：其它模组可通过 ModRegistry.GetApi&lt;IRelaxValleyApi&gt; 获取并注册菜单条目。</summary>
     public override object? GetApi() => new RelaxValleyApi(_menuRegistry);
@@ -82,13 +106,6 @@ public class ModEntry : Mod
                     Monitor.Log($"{id} [{category}]", LogLevel.Info);
             });
 
-        // 供诊断 F1 桥接（Lookup Anything 兼容）是否可用；发布前随其它 debug 命令一并删除
-        helper.ConsoleCommands.Add("rv_f1diag", "诊断 StardewUI 的 F1 桥接状态", (cmd, args) =>
-        {
-            bool registered = StardewUIF1Bridge.EnsureRegistered();
-            Monitor.Log($"F1 桥接诊断:\n{StardewUIF1Bridge.GetDiagnosis()}\n注册结果: {registered}", LogLevel.Info);
-        });
-
         // 供 mod 商店 JSON 使用：列出 Data/Shops 的所有商店 ID 与拥有者条件
         helper.ConsoleCommands.Add(
             "rv_list_shops",
@@ -117,6 +134,10 @@ public class ModEntry : Mod
 
     private void OnMenuChanged(object? sender, MenuChangedEventArgs e)
     {
+        // 任务一览页关闭后停止轮询
+        if (_liveQuestBoardMenu is not null && ReferenceEquals(e.OldMenu, _liveQuestBoardMenu))
+            ClearLiveQuestBoard();
+
         // 玩家在原版里打开过某个商店/菜单后，才允许工作室远程打开它。
         switch (e.NewMenu)
         {
@@ -255,6 +276,27 @@ public class ModEntry : Mod
             name: () => I18n.RelaxValley_Config_VanillaGates_Name(),
             tooltip: () => I18n.RelaxValley_Config_VanillaGates_Tooltip());
 
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.FishingInfoGrayUncaught,
+            setValue: value => Config.FishingInfoGrayUncaught = value,
+            name: () => I18n.RelaxValley_Config_FishingGrayUncaught_Name(),
+            tooltip: () => I18n.RelaxValley_Config_FishingGrayUncaught_Tooltip());
+
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.EnableAnimalPetAll,
+            setValue: value => Config.EnableAnimalPetAll = value,
+            name: () => I18n.RelaxValley_Config_AnimalPetAll_Name(),
+            tooltip: () => I18n.RelaxValley_Config_AnimalPetAll_Tooltip());
+
+        api.AddBoolOption(
+            ModManifest,
+            getValue: () => Config.EnableAnimalHarvestWithoutTool,
+            setValue: value => Config.EnableAnimalHarvestWithoutTool = value,
+            name: () => I18n.RelaxValley_Config_AnimalHarvestNoTool_Name(),
+            tooltip: () => I18n.RelaxValley_Config_AnimalHarvestNoTool_Tooltip());
+
         api.AddTextOption(
             ModManifest,
             getValue: () => string.Join("; ", Config.StatsMenuTypes),
@@ -284,8 +326,13 @@ public class ModEntry : Mod
         {
             // 读档/回标题时丢弃上一局遗留的延迟动作
             PendingActions.Clear();
+            LiveQuestBoard = null;
+            _liveQuestBoardMenu = null;
             return;
         }
+
+        // 任务一览页打开期间轮询任务日志变化（页内自带节流）
+        LiveQuestBoard?.PollForChanges();
 
         if (PendingActions.Count == 0 || !Context.IsPlayerFree) return;
 

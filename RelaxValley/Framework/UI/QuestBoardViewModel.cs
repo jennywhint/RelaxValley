@@ -168,6 +168,62 @@ public class QuestBoardViewModel : INotifyPropertyChanged
         _allQuests = BuildQuests();
         BuildOptions();
         ApplyFilters();
+        _lastSnapshot = BuildSnapshot();
+    }
+
+    // ── 实时刷新 ────────────────────────────────────────────────
+
+    /// <summary>轮询节流：每 30 tick（约半秒）检查一次任务日志变化。</summary>
+    private const int PollIntervalTicks = 30;
+
+    private int _ticksSinceLastPoll;
+    private string _lastSnapshot = "";
+
+    /// <summary>
+    /// 页面打开期间由 <see cref="ModEntry"/> 的 UpdateTicked 驱动：
+    /// 任务日志发生变化（接取 / 完成 / 进度文本推进）或已认识村民数量变化时，
+    /// 重建任务列表，让「进行中」任务的进度实时刷新。
+    /// </summary>
+    public void PollForChanges()
+    {
+        if (++_ticksSinceLastPoll < PollIntervalTicks) return;
+        _ticksSinceLastPoll = 0;
+
+        string snapshot = BuildSnapshot();
+        if (snapshot == _lastSnapshot) return;
+
+        _lastSnapshot = snapshot;
+        RefreshQuests();
+    }
+
+    /// <summary>
+    /// 任务日志变化检测快照：已认识村民数（社交类任务的进度来源）+
+    /// 各日志任务的 id / 完成状态 / 进度文本（读取 currentObjective 会顺带触发
+    /// 原版 reloadObjective，把进度文本刷成当前值）。
+    /// </summary>
+    private string BuildSnapshot()
+    {
+        var builder = new System.Text.StringBuilder();
+
+        // 已认识村民数（社交类任务的进度来源）；NetDictionary 只有 Length 属性 / Count() 方法
+        builder.Append(Game1.player is null ? 0 : Game1.player.friendshipData.Length).Append('|');
+
+        if (Game1.player is not null)
+        {
+            foreach (Quest quest in Game1.player.questLog)
+            {
+                if (quest is null) continue;
+
+                builder.Append(quest.id.Value)
+                       .Append(':')
+                       .Append(quest.completed.Value ? '1' : '0')
+                       .Append(':')
+                       .Append(quest.currentObjective)
+                       .Append('|');
+            }
+        }
+
+        return builder.ToString();
     }
 
     // ── 构建 ────────────────────────────────────────────────────
@@ -175,6 +231,7 @@ public class QuestBoardViewModel : INotifyPropertyChanged
     private List<QuestItem> BuildQuests()
     {
         var result = new List<QuestItem>();
+        var added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         Dictionary<string, string> questData;
         try
@@ -184,11 +241,15 @@ public class QuestBoardViewModel : INotifyPropertyChanged
         catch (Exception ex)
         {
             ModEntry.Instance.Monitor.Log($"读取 Data/Quests 失败：{ex.Message}", LogLevel.Error);
-            return result;
+            questData = new Dictionary<string, string>();
         }
+
+        var logQuests = GetLogQuestsById();
 
         foreach (var pair in questData)
         {
+            if (!added.Add(pair.Key)) continue;
+
             string[] fields = pair.Value.Split('/');
             if (fields.Length < 3 || string.IsNullOrWhiteSpace(fields[0])) continue;
 
@@ -200,10 +261,14 @@ public class QuestBoardViewModel : INotifyPropertyChanged
             }
 
             string rawType = fields[0];
-            Quest? quest = null;
 
-            // 只让原版解析器处理它支持的类型，避免解析错误刷日志
-            if (ParsableTypes.Contains(rawType))
+            // 已接取的任务必须用任务日志里的实时实例：
+            // currentObjective 的 getter 会先回读原始数据再调 reloadObjective()，
+            // 进度文本（已认识 X 人、已击杀 X/Y 等）总是当前值；
+            // getQuestFromId 只能造出"全新"实例，进度永远停留在初始状态。
+            logQuests.TryGetValue(pair.Key, out Quest? logQuest);
+            Quest? quest = logQuest;
+            if (quest is null && ParsableTypes.Contains(rawType))
             {
                 try
                 {
@@ -215,39 +280,22 @@ public class QuestBoardViewModel : INotifyPropertyChanged
                 }
             }
 
-            // 原版解析成功时用完整数据；自定义类型的模组任务用原始字段，
-            // 保证不会因为解析失败而从列表里消失。
-            string title = quest is not null
-                ? ParseText(quest.questTitle)
-                : ParseText(fields[1]);
-            if (string.IsNullOrWhiteSpace(title)) title = pair.Key;
+            result.Add(BuildQuestItem(pair.Key, rawType, fields, logQuest, quest));
+        }
 
-            string objective = quest is not null
-                ? ParseText(quest.currentObjective)
-                : (fields.Length > 3 ? ParseText(fields[3]) : "");
+        // 任务日志里有、但 Data/Quests 没有的任务（SpaceCore 等自定义任务类型）：
+        // 只用日志实例数据展示，保证不因数据缺失而从列表里消失。
+        foreach (var pair in logQuests)
+        {
+            if (!added.Add(pair.Key)) continue;
 
-            string description = quest is not null
-                ? ParseText(quest.questDescription)
-                : ParseText(fields[2]);
-
-            string sourceValue = GetSourceValue(pair.Key);
-            string statusText = GetStatusText(pair.Key, out string statusColor, out string statusValue);
-
-            result.Add(new QuestItem
+            if (_idPrefixes.Length > 0 && !_idPrefixes.Any(p =>
+                    pair.Key.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
             {
-                Id = pair.Key,
-                Title = title,
-                TypeValue = rawType,
-                TypeLabel = GetTypeLabel(rawType),
-                SourceValue = sourceValue,
-                SourceLabel = GetSourceLabel(sourceValue),
-                Objective = objective,
-                Description = description,
-                RewardText = quest is not null ? BuildRewardText(quest) : "",
-                StatusText = statusText,
-                StatusColor = statusColor,
-                StatusValue = statusValue
-            });
+                continue;
+            }
+
+            result.Add(BuildQuestItem(pair.Key, "", Array.Empty<string>(), pair.Value, pair.Value));
         }
 
         return result
@@ -257,10 +305,71 @@ public class QuestBoardViewModel : INotifyPropertyChanged
             .ToList();
     }
 
+    /// <summary>任务日志里的实时任务实例（id → Quest）。已接取任务的状态与进度都应以它为准。</summary>
+    private static Dictionary<string, Quest> GetLogQuestsById()
+    {
+        var map = new Dictionary<string, Quest>(StringComparer.OrdinalIgnoreCase);
+        if (Game1.player is null) return map;
+
+        foreach (Quest quest in Game1.player.questLog)
+        {
+            if (quest is null || string.IsNullOrWhiteSpace(quest.id.Value)) continue;
+            map[quest.id.Value] = quest;
+        }
+
+        return map;
+    }
+
+    /// <summary>
+    /// 组装单条任务卡片。
+    /// <paramref name="logQuest"/> 是任务日志里的实时实例（未接取时为 null）；
+    /// <paramref name="quest"/> 是用于展示的实例（接取任务 = 日志实例，未接取 = getQuestFromId 的新实例）。
+    /// </summary>
+    private QuestItem BuildQuestItem(
+        string questId,
+        string rawType,
+        string[] fields,
+        Quest? logQuest,
+        Quest? quest)
+    {
+        string title = quest is not null
+            ? ParseText(quest.questTitle)
+            : (fields.Length > 1 ? ParseText(fields[1]) : questId);
+        if (string.IsNullOrWhiteSpace(title)) title = questId;
+
+        string objective = quest is not null
+            ? ParseText(quest.currentObjective)
+            : (fields.Length > 3 ? ParseText(fields[3]) : "");
+
+        string description = quest is not null
+            ? ParseText(quest.questDescription)
+            : (fields.Length > 2 ? ParseText(fields[2]) : "");
+
+        string sourceValue = GetSourceValue(questId);
+        string statusText = GetStatusText(logQuest, out string statusColor, out string statusValue);
+
+        return new QuestItem
+        {
+            Id = questId,
+            Title = title,
+            TypeValue = rawType,
+            TypeLabel = GetTypeLabel(rawType),
+            SourceValue = sourceValue,
+            SourceLabel = GetSourceLabel(sourceValue),
+            Objective = objective,
+            Description = description,
+            RewardText = quest is not null ? BuildRewardText(quest) : "",
+            StatusText = statusText,
+            StatusColor = statusColor,
+            StatusValue = statusValue
+        };
+    }
+
     private void BuildOptions()
     {
         foreach (string type in _allQuests
                      .Select(q => q.TypeValue)
+                     .Where(t => !string.IsNullOrWhiteSpace(t))
                      .Distinct(StringComparer.OrdinalIgnoreCase)
                      .OrderBy(t => t, StringComparer.OrdinalIgnoreCase))
         {
@@ -343,14 +452,12 @@ public class QuestBoardViewModel : INotifyPropertyChanged
 
     // ── 状态 / 奖励 ─────────────────────────────────────────────
 
-    private string GetStatusText(string questId, out string color, out string statusValue)
+    /// <summary>任务状态：接取与否以任务日志里的实时实例为准（已接取未传实例时兜底为未接取）。</summary>
+    private string GetStatusText(Quest? logQuest, out string color, out string statusValue)
     {
-        Quest? accepted = Game1.player?.questLog
-            .FirstOrDefault(q => q is not null && q.id.Value == questId);
-
-        if (accepted is not null)
+        if (logQuest is not null)
         {
-            if (accepted.completed.Value)
+            if (logQuest.completed.Value)
             {
                 color = "#2E7D32";
                 statusValue = "Completed";
@@ -394,7 +501,7 @@ public class QuestBoardViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>重建任务列表（纯只读浏览，不提供接取——接取请到游戏内的对应 NPC / 布告栏）。</summary>
+    /// <summary>重建任务列表（纯只读浏览，不提供接取——接取请到游戏内的对应 NPC / 布告栏）。轮询检测到变化时调用。</summary>
     private void RefreshQuests()
     {
         _allQuests.Clear();

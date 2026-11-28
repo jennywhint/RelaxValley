@@ -58,6 +58,24 @@ public sealed class ModConfig
     public bool ElevatorProgressMode { get; set; } = true;
 
     /// <summary>
+    /// 农场动物页的「一键抚摸」按钮。开启后可一键抚摸所有今日未抚摸的动物。
+    /// 默认关闭。
+    /// </summary>
+    public bool EnableAnimalPetAll { get; set; } = false;
+
+    /// <summary>
+    /// 农场动物页允许无工具收获。开启后，收获选项不再要求手持挤奶桶 / 剪刀等对应工具。
+    /// 默认关闭（与原版一致，收获需要手持对应工具）。
+    /// </summary>
+    public bool EnableAnimalHarvestWithoutTool { get; set; } = false;
+
+    /// <summary>
+    /// 钓鱼情报页灰显未捕获的鱼。开启 = 没钓到过的鱼显示为灰色（信息照常可见），
+    /// 钓到后变为正常颜色。默认开启。
+    /// </summary>
+    public bool FishingInfoGrayUncaught { get; set; } = true;
+
+    /// <summary>
     /// 右键「农场动物」时尝试实例化的菜单类型全名
     /// （格式：命名空间.类型名, 程序集名）。留空表示不使用。
     /// </summary>

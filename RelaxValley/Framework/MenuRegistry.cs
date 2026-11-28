@@ -82,7 +82,12 @@ public sealed class MenuRegistry
             new MenuEntry("Calendar",           OpenCalendar,          category: "Info"),
             new MenuEntry("QuestBoard",         OpenQuestBoard,        category: "Info"),
             new MenuEntry("QuestOverview",      OpenQuestOverview,     category: "Info"),
-            new MenuEntry("SpecialOrder",       OpenSpecialOrder,      category: "Info"),
+            new MenuEntry("SpecialOrder",       OpenSpecialOrder,      category: "Info",
+                status: () => ModEntry.Config.RespectVanillaGates
+                              && !StardewValley.SpecialOrders.SpecialOrder.IsSpecialOrdersBoardUnlocked()
+                    ? MenuEntryStatus.Locked
+                    : MenuEntryStatus.Available,
+                lockReason: () => I18n.RelaxValley_UI_SpecialOrders_Locked()),
             new MenuEntry("WalnutRoomOrder",    OpenWalnutRoomOrder,   category: "Info",
                 status: () => ModEntry.Config.RespectVanillaGates && !IslandWest.IsQiWalnutRoomDoorUnlocked(out _)
                     ? MenuEntryStatus.Locked
@@ -373,21 +378,32 @@ public sealed class MenuRegistry
         Game1.playSound("bigSelect");
     }
 
-    /// <summary>杀怪奖励：打开冒险家公会的领取奖励界面（模拟 Action "Gil"）。</summary>
+    /// <summary>杀怪奖励：打开冒险家公会的领取奖励界面。</summary>
     private void OpenMonsterKillReward(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
 
-        var guild = Game1.getLocationFromName("AdventureGuild");
-        if (guild is null) { _monitor.Log("找不到冒险家公会。", LogLevel.Warn); return; }
-
-        // 先关掉当前菜单，确保玩家处于“空闲”状态
-        Game1.exitActiveMenu();
-
-        Game1.PerformActionWhenPlayerFree(() =>
+        var guild = Game1.getLocationFromName("AdventureGuild") as StardewValley.Locations.AdventureGuild;
+        if (guild is null)
         {
-            guild.performAction("Gil", Game1.player, new xTile.Dimensions.Location(0, 0));
-            Game1.playSound("bigSelect");
+            _monitor.Log("找不到冒险家公会。", LogLevel.Warn);
+            return;
+        }
+
+        // 原版奖励页面由 AdventureGuild.gil()（private）打开：它按"Buildings"图块索引分发，
+        // 没有 "Gil" 动作字符串可走 performAction，只能用 SMAPI 反射调用原版私有入口。
+        ModEntry.RunWhenPlayerFree(() =>
+        {
+            try
+            {
+                _helper.Reflection.GetMethod(guild, "gil").Invoke();
+                Game1.playSound("bigSelect");
+            }
+            catch (Exception ex)
+            {
+                _monitor.Log($"打开杀怪奖励页面失败：{ex}", LogLevel.Error);
+                Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_ViewLoadFailed());
+            }
         });
     }
 
@@ -436,21 +452,41 @@ public sealed class MenuRegistry
         }
 
         Game1.activeClickableMenu = menu;
+
+        // 打开期间由 ModEntry 的 UpdateTicked 驱动轮询，任务进度实时刷新；
+        // 菜单关闭时由 MenuChanged 注销
+        ModEntry.SetLiveQuestBoard(model, menu);
         Game1.playSound("bigSelect");
     }
 
     private void OpenSpecialOrder(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
-        Game1.activeClickableMenu = new SpecialOrdersBoard();
-        Game1.playSound("bigSelect");
+
+        // 与原版 Town 的看板 tile action 一致：mutex 加锁后打开，关闭时释放
+        Game1.player.team.ordersBoardMutex.RequestLock(() =>
+        {
+            Game1.activeClickableMenu = new SpecialOrdersBoard
+            {
+                behaviorBeforeCleanup = menu => Game1.player.team.ordersBoardMutex.ReleaseLock()
+            };
+            Game1.playSound("bigSelect");
+        });
     }
 
     private void OpenWalnutRoomOrder(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
-        Game1.activeClickableMenu = new SpecialOrdersBoard("Qi");
-        Game1.playSound("bigSelect");
+
+        // 与原版 QiChallengeBoard tile action 一致：mutex 加锁后打开，关闭时释放
+        Game1.player.team.qiChallengeBoardMutex.RequestLock(() =>
+        {
+            Game1.activeClickableMenu = new SpecialOrdersBoard("Qi")
+            {
+                behaviorBeforeCleanup = menu => Game1.player.team.qiChallengeBoardMutex.ReleaseLock()
+            };
+            Game1.playSound("bigSelect");
+        });
     }
 
     private void OpenFarmComputer(MenuEntry __)
@@ -575,7 +611,7 @@ public sealed class MenuRegistry
     /// <summary>配方统计右键：完美手册的烹饪 / 制作配方进度页（无需道具）。</summary>
     private void OpenRecipeStatsMod(MenuEntry __) => OpenExternalPerfectionPage(__);
 
-    /// <summary>动物页：左键查看农场动物概览（原版数据自绘页面）。</summary>
+    /// <summary>动物页：左键查看农场动物概览（原版数据自绘页面，卡片可互动：喂养 / 抚摸 / 收获）。</summary>
     private void OpenFarmAnimals(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
@@ -588,7 +624,9 @@ public sealed class MenuRegistry
             return;
         }
 
-        var model = new FarmAnimalsViewModel(_helper.Translation);
+        var model = new FarmAnimalsViewModel(
+            ModEntry.Config.EnableAnimalHarvestWithoutTool,
+            ModEntry.Config.EnableAnimalPetAll);
         var menu = viewEngine.CreateMenuFromAsset(
             $"Mods/{ModEntry.Instance.ModManifest.UniqueID}/Views/FarmAnimalsView",
             model);
@@ -634,7 +672,7 @@ public sealed class MenuRegistry
         Game1.showGlobalMessage(I18n.RelaxValley_UI_Animals_NoExternal());
     }
 
-    /// <summary>钓鱼情报：按当前季节 / 天气 / 时间模拟原版垂钓判定，列出当前可钓到的物品与占比。卡片悬浮含原版收藏页同款信息，F1 可查询。</summary>
+    /// <summary>钓鱼情报：按当前季节 / 天气 / 时间模拟原版垂钓判定，列出当前可钓到的物品与占比、捕获记录与尺寸上限。卡片悬浮含原版收藏页同款信息，F1 可查询。</summary>
     private void OpenFishingInfo(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
@@ -650,10 +688,10 @@ public sealed class MenuRegistry
         var location = Game1.currentLocation;
         if (location is null) return;
 
-        // F1 桥接只在 StardewUI fork 上可用；官方版走无桥接模板，避免绑定报错刷屏
-        bool bridge = StardewUIF1Bridge.EnsureRegistered();
-        string assetName = bridge ? "FishingInfoView" : "FishingInfoViewPlain";
-        var model = FishingInfoViewModel.Build(location, Game1.player);
+        // F1 集成（hovered-subject 绑定）只在 StardewUI fork 上可用；官方版走无绑定模板，避免报错刷屏
+        bool lookup = StardewUILookupCompat.IsSupported();
+        string assetName = lookup ? "FishingInfoView" : "FishingInfoViewPlain";
+        var model = FishingInfoViewModel.Build(location, Game1.player, ModEntry.Config.FishingInfoGrayUncaught);
         var menu = viewEngine.CreateMenuFromAsset($"Mods/{ModEntry.Instance.ModManifest.UniqueID}/Views/{assetName}", model);
 
         if (menu is null)
@@ -667,14 +705,42 @@ public sealed class MenuRegistry
         Game1.playSound("bigSelect");
     }
 
+    /// <summary>「所有的鱼」：从 Data/Locations + Data/Fish 枚举全部钓鱼规则，按时间 / 地点 / 来源筛选。</summary>
+    public void OpenFishingRules()
+    {
+        if (!TryPrepareMenu()) return;
+
+        var viewEngine = ModEntry.ViewEngine;
+        if (viewEngine is null)
+        {
+            _monitor.Log("StardewUI API 不可用，无法打开「所有的鱼」。", LogLevel.Error);
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_StardewUIRequired());
+            return;
+        }
+
+        var model = new FishingRulesViewModel();
+        var menu = viewEngine.CreateMenuFromAsset(
+            $"Mods/{ModEntry.Instance.ModManifest.UniqueID}/Views/FishingRulesView", model);
+
+        if (menu is null)
+        {
+            _monitor.Log("无法创建 FishingRulesView", LogLevel.Error);
+            Game1.showGlobalMessage(I18n.RelaxValley_UI_Common_ViewLoadFailed());
+            return;
+        }
+
+        Game1.activeClickableMenu = menu;
+        Game1.playSound("bigSelect");
+    }
+
     /// <summary>博物馆收藏：逐件列出可捐赠物品（矿物 / 古物）与捐赠状态。可捐判定用原版 IsItemSuitableForDonation，模组物品自动计入。</summary>
     private void OpenMuseum(MenuEntry __)
     {
         if (!TryPrepareMenu()) return;
 
-        // F1 桥接（hovered-subject 绑定）只在 StardewUI fork 上可用；官方版走无桥接模板，避免绑定报错刷屏
-        bool bridge = StardewUIF1Bridge.EnsureRegistered();
-        ShowView(bridge ? "MuseumView" : "MuseumViewPlain", MuseumViewModel.Build());
+        // F1 集成（hovered-subject 绑定）只在 StardewUI fork 上可用；官方版走无绑定模板，避免报错刷屏
+        bool lookup = StardewUILookupCompat.IsSupported();
+        ShowView(lookup ? "MuseumView" : "MuseumViewPlain", MuseumViewModel.Build());
     }
 
     private void OpenFriendship(MenuEntry __)
@@ -695,7 +761,10 @@ public sealed class MenuRegistry
             ModEntry.Config.EnableTalkAll,
             ModEntry.Config.EnableFriendshipTeleport,
             ModEntry.Config.EnableBatchGift);
-        string assetName = $"Mods/{ModEntry.Instance.ModManifest.UniqueID}/Views/FriendshipView";
+
+        // F1 集成（hovered-subject 绑定）只在 StardewUI fork 上可用；官方版走无绑定模板，避免报错刷屏
+        bool lookup = StardewUILookupCompat.IsSupported();
+        string assetName = $"Mods/{ModEntry.Instance.ModManifest.UniqueID}/Views/{(lookup ? "FriendshipView" : "FriendshipViewPlain")}";
         var menu = viewEngine.CreateMenuFromAsset(assetName, model);
 
         if (menu is null)

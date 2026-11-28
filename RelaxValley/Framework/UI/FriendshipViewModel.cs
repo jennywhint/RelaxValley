@@ -468,6 +468,7 @@ public class FriendshipViewModel : INotifyPropertyChanged
         return new FriendItem
         {
             NpcName = npcName,
+            Npc = npc,
             DisplayName = displayName,
             IsMet = isMet,
             IsPinned = isPinned,
@@ -573,12 +574,13 @@ public class FriendshipViewModel : INotifyPropertyChanged
             PreviewHasSprite = false;
         }
 
-        // 送礼口味推荐：个人口味与通用口味分开显示（原版 Data/NPCGiftTastes，模组改的数据自动生效）
-        var prefs = GetGiftPreferences(friend.NpcName);
-        IndividualLovedIcons = BuildGiftIcons(prefs.IndividualLoved);
-        IndividualLikedIcons = BuildGiftIcons(prefs.IndividualLiked);
-        UniversalLovedIcons = BuildGiftIcons(prefs.UniversalLoved);
-        UniversalLikedIcons = BuildGiftIcons(prefs.UniversalLiked);
+        // 送礼口味推荐：个人口味与通用口味分开显示，判定直接调用原版 getGiftTasteForThisItem
+        var tasteNpc = Game1.getCharacterFromName(friend.NpcName);
+        GiftTastes tastes = GetGiftTastes(tasteNpc);
+        IndividualLovedIcons = BuildGiftIcons(tastes.PersonalLoved);
+        IndividualLikedIcons = BuildGiftIcons(tastes.PersonalLiked);
+        UniversalLovedIcons = BuildGiftIcons(tastes.UniversalLoved);
+        UniversalLikedIcons = BuildGiftIcons(tastes.UniversalLiked);
 
         HasPreview = true;
     }
@@ -596,163 +598,166 @@ public class FriendshipViewModel : INotifyPropertyChanged
     // ── 送礼口味解析 ────────────────────────────────────────────
 
     /// <summary>口味解析结果缓存（会话内数据固定，无需重复解析）。</summary>
-    private static readonly Dictionary<string,
-        (List<string> IndividualLoved, List<string> IndividualLiked, List<string> UniversalLoved, List<string> UniversalLiked)> GiftTasteCache =
-        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, GiftTastes> GiftTasteCache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>悬停预览里最多显示多少个图标。</summary>
     private const int MaxGiftIcons = 8;
 
-    /// <summary>
-    /// 从原版 Data/NPCGiftTastes 解析村民最爱 / 喜欢的礼物清单。
-    /// 口味 = 个人条目（字段 5/7/9/11）与通用条目（Universal_Love/Like/Dislike/Hate 的同位字段）合并，
-    /// 优先级与原版 <see cref="NPC.getGiftTasteForThisItem"/> 一致：
-    /// 个人最爱 → 个人喜欢 → 个人不喜欢 → 个人讨厌 → 通用最爱 → 通用喜欢 → 通用不喜欢 → 通用讨厌。
-    /// 模组（CP / 数据编辑）改过的内容在 Game1.NPCGiftTastes 里即为最终值，自动生效。
-    /// </summary>
-    private static (List<string> IndividualLoved, List<string> IndividualLiked, List<string> UniversalLoved, List<string> UniversalLiked) GetGiftPreferences(string npcName)
+    /// <summary>四组口味清单：个人最爱 / 个人喜欢 / 通用最爱 / 通用喜欢。</summary>
+    public sealed record GiftTastes(
+        List<StardewValley.Object> PersonalLoved,
+        List<StardewValley.Object> PersonalLiked,
+        List<StardewValley.Object> UniversalLoved,
+        List<StardewValley.Object> UniversalLiked);
+
+    /// <summary>全部可作为礼物候选的物品（一次性构建，含模组物品）。</summary>
+    private static List<StardewValley.Object>? _giftCandidates;
+
+    private static List<StardewValley.Object> GetGiftCandidates()
     {
-        if (GiftTasteCache.TryGetValue(npcName, out var cached))
-            return cached;
+        if (_giftCandidates is not null) return _giftCandidates;
 
-        var result = (new List<string>(), new List<string>(), new List<string>(), new List<string>());
-
-        try
+        var list = new List<StardewValley.Object>();
+        foreach (var pair in Game1.objectData)
         {
-            var tastes = Game1.NPCGiftTastes;
-            if (tastes is not null && tastes.ContainsKey(npcName))            {
-                // 有序桶：第一个命中某物品的桶决定其口味（个人覆盖通用，讨厌/不喜欢压过喜爱）
-                var buckets = new (List<string> Items, bool Loved, bool Personal)[]
-                {
-                    (ParseGiftIds(GetTasteField(tastes, npcName, 5)), true, true),
-                    (ParseGiftIds(GetTasteField(tastes, npcName, 7)), false, true),
-                    (ParseGiftIds(GetTasteField(tastes, npcName, 9)), false, true),
-                    (ParseGiftIds(GetTasteField(tastes, npcName, 11)), false, true),
-                    (ParseGiftIds(GetTasteField(tastes, "Universal_Love", 5)), true, false),
-                    (ParseGiftIds(GetTasteField(tastes, "Universal_Like", 7)), false, false),
-                    (ParseGiftIds(GetTasteField(tastes, "Universal_Dislike", 9)), false, false),
-                    (ParseGiftIds(GetTasteField(tastes, "Universal_Hate", 11)), false, false),
-                };
+            try
+            {
+                var data = ItemRegistry.GetDataOrErrorItem("(O)" + pair.Key);
+                if (data.IsErrorItem) continue;
+                if (ItemRegistry.Create(data.QualifiedItemId) is not StardewValley.Object obj) continue;
 
-                var indLoved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var indLiked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var uniLoved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var uniLiked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (RelationshipItemIds.Contains(pair.Key)) continue;
+                if (ItemContextTagManager.HasBaseTag(obj.QualifiedItemId, "not_giftable")) continue;
 
-                foreach ((List<string> items, bool isLoved, bool isPersonal) in buckets)
-                {
-                    foreach (string id in items)
-                    {
-                        if (!assigned.Add(id)) continue;
-
-                        if (isPersonal)
-                        {
-                            if (isLoved) indLoved.Add(id); else indLiked.Add(id);
-                        }
-                        else
-                        {
-                            if (isLoved) uniLoved.Add(id); else uniLiked.Add(id);
-                        }
-                    }
-                }
-
-                result = (indLoved.ToList(), indLiked.ToList(), uniLoved.ToList(), uniLiked.ToList());
+                list.Add(obj);
+            }
+            catch
+            {
+                // 单个物品数据异常不影响其它物品
             }
         }
-        catch
+
+        _giftCandidates = list;
+        return _giftCandidates;
+    }
+
+    /// <summary>
+    /// 按原版 <see cref="NPC.getGiftTasteForThisItem"/> 逐物品判定口味，并按个人 / 通用归属分组。
+    /// 判定直接调用原版方法——原版的字段布局与直觉不同：个人条目的 ID 在字段 1（最爱）/ 3（喜欢）等
+    /// 奇数位，通用条目（Universal_*）整串就是"ID / 类别号 / context tag"的空格分隔列表，
+    /// 还有古物强制不喜欢、廉价物品默认不喜欢等规则，手写解析极易出错。
+    /// 归属与原版判定顺序一致：物品命中个人条目（ID → context tag → 类别号）归个人组，否则归通用组；
+    /// 类别号兜底仅在物品未与通用条目直接命中时生效（原版 wasIndividualUniversal 语义）。
+    /// </summary>
+    private static GiftTastes GetGiftTastes(NPC? npc)
+    {
+        if (npc is null)
+            return new GiftTastes(new(), new(), new(), new());
+
+        if (GiftTasteCache.TryGetValue(npc.Name, out GiftTastes cached))
+            return cached;
+
+        var personalLoved = new List<StardewValley.Object>();
+        var personalLiked = new List<StardewValley.Object>();
+        var universalLoved = new List<StardewValley.Object>();
+        var universalLiked = new List<StardewValley.Object>();
+
+        // 个人条目：'/' 分隔，偶数位是反应文本，奇数位 1/3/5/7/9 依次为 最爱/喜欢/不喜欢/讨厌/中性
+        string[] personalFields = Game1.NPCGiftTastes.TryGetValue(npc.Name, out string? rawPersonal)
+            ? (rawPersonal ?? "").Split('/')
+            : Array.Empty<string>();
+        string[] lovedList = GetPersonalList(personalFields, 1);
+        string[] likedList = GetPersonalList(personalFields, 3);
+
+        // 通用条目：整条字符串就是 ID / 类别号 / context tag 的空格分隔列表（原版 getGiftTasteForThisItem 同源解析）
+        string[] uniLovedList = GetUniversalList("Universal_Love");
+        string[] uniLikedList = GetUniversalList("Universal_Like");
+        string[] uniDislikedList = GetUniversalList("Universal_Dislike");
+        string[] uniHatedList = GetUniversalList("Universal_Hate");
+
+        foreach (StardewValley.Object item in GetGiftCandidates())
         {
-            // 数据异常时只是没有推荐，不影响页面其它功能
+            int taste = npc.getGiftTasteForThisItem(item);
+            bool isLoved = taste == 0;
+            bool isLiked = taste == 2;
+            if (!isLoved && !isLiked) continue;
+
+            // 类别号兜底只在物品未与通用条目直接命中时生效（原版语义）；
+            // 只在真正需要判断类别兜底时才做通用条目 ID 扫描（懒计算，省一次全列表遍历）
+            bool? wasIndividualUniversal = null;
+            bool WasIndividualUniversal()
+            {
+                wasIndividualUniversal ??=
+                    npc.CheckTaste(uniLovedList, item)
+                    || npc.CheckTaste(uniHatedList, item)
+                    || npc.CheckTaste(uniLikedList, item)
+                    || npc.CheckTaste(uniDislikedList, item);
+                return wasIndividualUniversal.Value;
+            }
+
+            if (isLoved)
+            {
+                if (MatchesPersonal(npc, lovedList, item, WasIndividualUniversal)) personalLoved.Add(item);
+                else universalLoved.Add(item);
+            }
+            else
+            {
+                if (MatchesPersonal(npc, likedList, item, WasIndividualUniversal)) personalLiked.Add(item);
+                else universalLiked.Add(item);
+            }
         }
 
-        GiftTasteCache[npcName] = result;
+        var result = new GiftTastes(
+            SortGifts(personalLoved),
+            SortGifts(personalLiked),
+            SortGifts(universalLoved),
+            SortGifts(universalLiked));
+
+        GiftTasteCache[npc.Name] = result;
         return result;
     }
 
-    /// <summary>取某条目指定下标的口味字段（条目串以 '/' 分隔，越界或缺失返回空串）。</summary>
-    private static string GetTasteField(IDictionary<string, string> tastes, string key, int index)
-    {
-        if (!tastes.TryGetValue(key, out string? raw) || string.IsNullOrWhiteSpace(raw)) return "";
+    /// <summary>取个人条目指定下标的口味字段（空缺返回空列表）。</summary>
+    private static string[] GetPersonalList(string[] fields, int index) =>
+        fields.Length > index ? SplitBySpace(fields[index]) : Array.Empty<string>();
 
-        string[] fields = raw.Split('/');
-        return fields.Length > index ? fields[index] : "";
-    }
+    /// <summary>取通用条目（整串即为 ID / 类别 / 标签列表）。</summary>
+    private static string[] GetUniversalList(string key) =>
+        Game1.NPCGiftTastes.TryGetValue(key, out string? raw) ? SplitBySpace(raw ?? "") : Array.Empty<string>();
 
-    /// <summary>类别 ID → 该类别下的物品 ID（qualified）。首次使用时从 objectData 构建，模组物品自动包含。</summary>
-    private static Dictionary<int, List<string>>? _categoryItems;
-
-    private static List<string> GetCategoryItems(int category)
-    {
-        if (_categoryItems is null)
-        {
-            var map = new Dictionary<int, List<string>>();
-            foreach (var pair in Game1.objectData)
-            {
-                if (pair.Value.Category is int cat)
-                {
-                    if (!map.TryGetValue(cat, out List<string> list))
-                        map[cat] = list = new List<string>();
-                    list.Add("(O)" + pair.Key);
-                }
-            }
-            _categoryItems = map;
-        }
-
-        return _categoryItems.TryGetValue(category, out List<string>? items)
-            ? items
-            : new List<string>();
-    }
+    /// <summary>与原版 ArgUtility.SplitBySpace 同语义：按空格拆分并忽略多余空白。</summary>
+    private static string[] SplitBySpace(string value) =>
+        value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
     /// <summary>
-    /// 规范化口味字段里的物品 ID：兼容裸数字（"80"）、旧格式（"O 80"）
-    /// 与 1.6 的限定格式（"(O)80"）。
-    /// 负数是类别引用（如 -2 = 所有宝石、-80 = 所有花）：原版通用口味大量使用类别，
-    /// 直接跳过会让「宝石是通用喜欢」这类口味完全消失——这里把类别展开成
-    /// 该类别下的具体物品（按数据顺序，模组加的新物品自动包含），再参与口味判定。
+    /// 物品是否命中个人口味条目，匹配形式与原版判定同序：
+    /// 物品 ID（CheckTaste）→ context tag（CheckTasteContextTags）→ 类别号（原版兜底）。
     /// </summary>
-    private static List<string> ParseGiftIds(string raw)
+    private static bool MatchesPersonal(NPC npc, string[] list, Item item, Func<bool> wasIndividualUniversal)
     {
-        var ids = new List<string>();
+        if (npc.CheckTaste(list, item)) return true;
+        if (npc.CheckTasteContextTags(item, list)) return true;
 
-        foreach (string part in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-        {
-            string id = part.Trim();
-            if (id.Length == 0) continue;
+        if (item is StardewValley.Object obj && obj.Category != 0 && !wasIndividualUniversal())
+            return list.Contains(obj.Category.ToString());
 
-            if (id.StartsWith('-') && int.TryParse(id, out int category))
-            {
-                ids.AddRange(GetCategoryItems(-category));
-                continue;
-            }
-
-            if (id.StartsWith("(O)", StringComparison.Ordinal))
-            {
-                ids.Add(id);
-            }
-            else if (id.StartsWith("O ", StringComparison.OrdinalIgnoreCase))
-            {
-                ids.Add("(O)" + id.Substring(2).Trim());
-            }
-            else if (id.All(char.IsDigit))
-            {
-                ids.Add("(O)" + id);
-            }
-        }
-
-        return ids;
+        return false;
     }
 
-    /// <summary>把物品 ID 转成预览图标；未知物品（模组未加载等）直接跳过。</summary>
-    private static List<GiftIcon> BuildGiftIcons(List<string> ids)
+    private static List<StardewValley.Object> SortGifts(List<StardewValley.Object> items) =>
+        items.OrderBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>把物品转成预览图标；最多显示 MaxGiftIcons 个。</summary>
+    private static List<GiftIcon> BuildGiftIcons(List<StardewValley.Object> items)
     {
         var icons = new List<GiftIcon>();
 
-        foreach (string id in ids)
+        foreach (StardewValley.Object item in items)
         {
             if (icons.Count >= MaxGiftIcons) break;
 
-            var data = ItemRegistry.GetData(id);
-            if (data is null) continue;
+            var data = ItemRegistry.GetDataOrErrorItem(item.QualifiedItemId);
+            if (data.IsErrorItem) continue;
 
             icons.Add(new GiftIcon { Sprite = Tuple.Create(data.GetTexture(), data.GetSourceRect()) });
         }
@@ -1248,6 +1253,13 @@ public class FriendshipViewModel : INotifyPropertyChanged
 public class FriendItem
 {
     public string NpcName { get; set; } = "";
+
+    /// <summary>
+    /// F1 查询对象（强类型 NPC）：mushymato fork 的 StardewUI 内置转换器会把它转到
+    /// ViewMenu.hoveredNpc（Lookup Anything 官方约定字段）；官方版 StardewUI 无该属性，走 Plain 模板。
+    /// </summary>
+    public NPC? Npc { get; set; }
+
     public string DisplayName { get; set; } = "";
     public bool IsMet { get; set; }
 

@@ -131,7 +131,8 @@
                  right-click=|^OnFriendRightClicked(NpcName)|
                  pointer-enter=|^OnFriendHovered(NpcName)|
                  pointer-leave=|^OnFriendUnhovered()|
-                 tooltip={:TooltipText}>
+                 tooltip={:TooltipText}
+                 hovered-subject={:Npc}>
             <lane orientation="vertical">
               <lane orientation="horizontal" vertical-content-alignment="middle">
                 <label font="dialogue" text={:DisplayName} color={:NameColor} />
